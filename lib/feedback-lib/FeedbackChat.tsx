@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 
 interface Message {
   role: "user" | "assistant";
@@ -30,6 +30,10 @@ export interface FeedbackLabels {
   placeholder: string;
   button: string;
   thinking: string;
+  endSession: string;
+  sessionActive: string;
+  timeoutError: string;
+  networkError: string;
 }
 
 const defaultLabels: FeedbackLabels = {
@@ -44,6 +48,10 @@ const defaultLabels: FeedbackLabels = {
   placeholder: "Describe your issue...",
   button: "Report an Issue",
   thinking: "Thinking...",
+  endSession: "End Session",
+  sessionActive: "Session active",
+  timeoutError: "Claude did not respond in time. The Stop hook may be misconfigured.",
+  networkError: "Network error — check your connection and try again.",
 };
 
 interface FeedbackChatProps {
@@ -53,6 +61,14 @@ interface FeedbackChatProps {
   accentClass?: string;
   /** Color scheme: 'system' follows OS preference, 'light' or 'dark' forces a mode */
   colorScheme?: 'system' | 'light' | 'dark';
+}
+
+const SESSION_STORAGE_KEY = "feedback-chat-session";
+
+interface PersistedSession {
+  sessionId: string;
+  tmuxSession: string;
+  messages: Message[];
 }
 
 function useSystemDark() {
@@ -84,8 +100,67 @@ export function FeedbackChat({ labels: labelOverrides, accentClass, colorScheme 
   const [checkedIssues, setCheckedIssues] = useState<boolean[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [submitResults, setSubmitResults] = useState<SubmitResult[] | null>(null);
+  const [hookWarning, setHookWarning] = useState<string | null>(null);
+  const [restoredSession, setRestoredSession] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  const hasSession = sessionId !== null;
+
+  // Persist session to sessionStorage whenever it changes
+  useEffect(() => {
+    if (sessionId && tmuxSession) {
+      const data: PersistedSession = { sessionId, tmuxSession, messages };
+      sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(data));
+    }
+  }, [sessionId, tmuxSession, messages]);
+
+  // Restore session from sessionStorage on mount
+  useEffect(() => {
+    if (restoredSession) return;
+    setRestoredSession(true);
+
+    const stored = sessionStorage.getItem(SESSION_STORAGE_KEY);
+    if (!stored) return;
+
+    try {
+      const data: PersistedSession = JSON.parse(stored);
+      if (!data.sessionId || !data.tmuxSession) return;
+
+      // Verify the session is still alive
+      fetch(`/api/feedback/status?tmuxSession=${encodeURIComponent(data.tmuxSession)}`)
+        .then(res => res.json())
+        .then(result => {
+          if (result.alive) {
+            setSessionId(data.sessionId);
+            setTmuxSession(data.tmuxSession);
+            if (data.messages?.length > 0) {
+              setMessages(data.messages);
+            }
+          } else {
+            sessionStorage.removeItem(SESSION_STORAGE_KEY);
+          }
+        })
+        .catch(() => {
+          sessionStorage.removeItem(SESSION_STORAGE_KEY);
+        });
+    } catch {
+      sessionStorage.removeItem(SESSION_STORAGE_KEY);
+    }
+  }, [restoredSession]);
+
+  // Clean up session on page unload via sendBeacon
+  useEffect(() => {
+    function handleUnload() {
+      if (tmuxSession) {
+        const body = JSON.stringify({ tmuxSession });
+        navigator.sendBeacon("/api/feedback/close", new Blob([body], { type: "application/json" }));
+        sessionStorage.removeItem(SESSION_STORAGE_KEY);
+      }
+    }
+    window.addEventListener("beforeunload", handleUnload);
+    return () => window.removeEventListener("beforeunload", handleUnload);
+  }, [tmuxSession]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -108,7 +183,7 @@ export function FeedbackChat({ labels: labelOverrides, accentClass, colorScheme 
     setOpen(false);
   }
 
-  function handleNewChat() {
+  const closeSession = useCallback(() => {
     if (tmuxSession) {
       fetch("/api/feedback/close", {
         method: "POST",
@@ -116,9 +191,24 @@ export function FeedbackChat({ labels: labelOverrides, accentClass, colorScheme 
         body: JSON.stringify({ tmuxSession }),
       }).catch(() => {});
     }
-    setMessages([{ role: "assistant", text: labels.greeting }]);
+    sessionStorage.removeItem(SESSION_STORAGE_KEY);
     setSessionId(null);
     setTmuxSession(null);
+    setHookWarning(null);
+  }, [tmuxSession]);
+
+  function handleNewChat() {
+    closeSession();
+    setMessages([{ role: "assistant", text: labels.greeting }]);
+    setInput("");
+    setIssues(null);
+    setCheckedIssues([]);
+    setSubmitResults(null);
+  }
+
+  function handleEndSession() {
+    closeSession();
+    setMessages([{ role: "assistant", text: labels.greeting }]);
     setInput("");
     setIssues(null);
     setCheckedIssues([]);
@@ -143,11 +233,22 @@ export function FeedbackChat({ labels: labelOverrides, accentClass, colorScheme 
         body: JSON.stringify({ message: text, sessionId, tmuxSession }),
       });
 
-      if (!res.ok) throw new Error("Request failed");
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        if (res.status === 504 || data.error === 'timeout') {
+          setMessages((prev) => [...prev, { role: "assistant", text: labels.timeoutError }]);
+          // Preserve session info from timeout response
+          if (data.sessionId) setSessionId(data.sessionId);
+          if (data.tmuxSession) setTmuxSession(data.tmuxSession);
+          return;
+        }
+        throw new Error(data.message || "Request failed");
+      }
 
       const data = await res.json();
       setSessionId(data.sessionId);
       setTmuxSession(data.tmuxSession);
+      if (data.hookWarning) setHookWarning(data.hookWarning);
 
       let displayText = data.response;
       if (data.issues) {
@@ -160,8 +261,9 @@ export function FeedbackChat({ labels: labelOverrides, accentClass, colorScheme 
         setIssues(data.issues);
         setCheckedIssues(new Array(data.issues.length).fill(true));
       }
-    } catch {
-      setMessages((prev) => [...prev, { role: "assistant", text: labels.error }]);
+    } catch (err) {
+      const isNetwork = err instanceof TypeError && err.message === 'Failed to fetch';
+      setMessages((prev) => [...prev, { role: "assistant", text: isNetwork ? labels.networkError : labels.error }]);
     } finally {
       setLoading(false);
     }
@@ -211,15 +313,21 @@ export function FeedbackChat({ labels: labelOverrides, accentClass, colorScheme 
 
   if (!open) {
     return (
-      <button
-        onClick={handleOpen}
-        className={`fixed bottom-6 end-6 z-50 w-14 h-14 ${accent} text-white rounded-full shadow-lg flex items-center justify-center transition-colors`}
-        title={labels.button}
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6">
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-        </svg>
-      </button>
+      <div className="fixed bottom-6 end-6 z-50">
+        <button
+          onClick={handleOpen}
+          className={`w-14 h-14 ${accent} text-white rounded-full shadow-lg flex items-center justify-center transition-colors relative`}
+          title={labels.button}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          </svg>
+          {/* Session active indicator dot */}
+          {hasSession && (
+            <span className="absolute top-0 right-0 w-3.5 h-3.5 bg-green-400 border-2 border-white rounded-full" />
+          )}
+        </button>
+      </div>
     );
   }
 
@@ -227,8 +335,21 @@ export function FeedbackChat({ labels: labelOverrides, accentClass, colorScheme 
     <div className={`fixed bottom-6 end-6 z-50 w-96 max-h-[min(32rem,calc(100dvh-3rem))] ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'} rounded-2xl shadow-2xl border flex flex-col overflow-hidden`}>
       {/* Header */}
       <div className={`flex items-center justify-between px-4 py-3 ${accentBase} text-white`}>
-        <span className="font-semibold text-sm">{labels.title}</span>
         <div className="flex items-center gap-2">
+          <span className="font-semibold text-sm">{labels.title}</span>
+          {hasSession && (
+            <span className="flex items-center gap-1 text-xs opacity-80">
+              <span className="w-2 h-2 bg-green-400 rounded-full inline-block" />
+              {labels.sessionActive}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {hasSession && (
+            <button onClick={handleEndSession} className="text-xs text-indigo-200 hover:text-white transition-colors" title={labels.endSession}>
+              {labels.endSession}
+            </button>
+          )}
           <button onClick={handleNewChat} className="text-xs text-indigo-200 hover:text-white transition-colors" title={labels.newChat}>
             {labels.newChat}
           </button>
@@ -239,6 +360,13 @@ export function FeedbackChat({ labels: labelOverrides, accentClass, colorScheme 
           </button>
         </div>
       </div>
+
+      {/* Hook warning banner */}
+      {hookWarning && (
+        <div className={`px-3 py-2 text-xs ${isDark ? 'bg-yellow-900/40 text-yellow-300 border-yellow-800' : 'bg-yellow-50 text-yellow-800 border-yellow-200'} border-b`}>
+          {hookWarning}
+        </div>
+      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 min-h-[12rem] max-h-[20rem]">

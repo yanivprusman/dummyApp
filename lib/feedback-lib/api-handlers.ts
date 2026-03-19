@@ -1,13 +1,45 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { execFile } from 'child_process';
-import { launchFeedback, sendMessage, killFeedback } from './claude-launcher';
+import { existsSync, readFileSync } from 'fs';
+import { launchFeedback, sendMessage, killFeedback, isTmuxAlive } from './claude-launcher';
 import { waitForResponse, resolveResponse } from './pending-responses';
+
+/** Track last activity timestamp per tmux session for auto-cleanup */
+const sessionLastActivity = new Map<string, { timestamp: number; appName: string }>();
+const SESSION_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+
+let cleanupIntervalStarted = false;
+
+function startSessionCleanupInterval() {
+  if (cleanupIntervalStarted) return;
+  cleanupIntervalStarted = true;
+
+  setInterval(() => {
+    const now = Date.now();
+    for (const [tmux, info] of sessionLastActivity.entries()) {
+      if (now - info.timestamp > SESSION_TIMEOUT_MS) {
+        killFeedback(tmux, info.appName);
+        sessionLastActivity.delete(tmux);
+      }
+    }
+  }, 60_000); // Check every minute
+}
+
+function touchSession(tmuxSession: string, appName: string) {
+  sessionLastActivity.set(tmuxSession, { timestamp: Date.now(), appName });
+}
+
+function removeSession(tmuxSession: string) {
+  sessionLastActivity.delete(tmuxSession);
+}
 
 /**
  * Returns a POST handler for /api/feedback
  * Launches or messages the Claude issue-clarifier session.
  */
 export function handleFeedbackMessage(appName: string, workDir: string) {
+  startSessionCleanupInterval();
+
   return async function POST(request: NextRequest) {
     try {
       const { message, sessionId, tmuxSession } = await request.json();
@@ -18,8 +50,12 @@ export function handleFeedbackMessage(appName: string, workDir: string) {
 
       let csid: string;
       let tmux: string;
+      let hookWarning: string | undefined;
 
       if (!sessionId) {
+        // Check Stop hook config before launching
+        hookWarning = checkStopHookConfig(workDir);
+
         const result = launchFeedback({ appName, workDir, firstMessage: message.trim() });
         csid = result.claudeSessionId;
         tmux = result.tmuxSession;
@@ -29,7 +65,21 @@ export function handleFeedbackMessage(appName: string, workDir: string) {
         sendMessage(tmux, message.trim());
       }
 
-      const response = await waitForResponse(csid, 120_000);
+      touchSession(tmux, appName);
+
+      let response: string;
+      try {
+        response = await waitForResponse(csid, 120_000);
+      } catch (err) {
+        const isTimeout = err instanceof Error && err.message.includes('Timeout');
+        if (isTimeout) {
+          return NextResponse.json(
+            { error: 'timeout', message: 'Claude session did not respond — the Stop hook may be misconfigured. Check .claude/settings.local.json in the app directory.', sessionId: csid, tmuxSession: tmux },
+            { status: 504 },
+          );
+        }
+        throw err;
+      }
 
       // Check if the response contains a fenced JSON block with issues
       const jsonMatch = response.match(/```json\s*\n([\s\S]*?)\n```/);
@@ -48,15 +98,33 @@ export function handleFeedbackMessage(appName: string, workDir: string) {
         sessionId: csid,
         tmuxSession: tmux,
         ...(issues && { issues }),
+        ...(hookWarning && { hookWarning }),
       });
     } catch (err) {
       console.error(`${appName} feedback API error:`, err);
       return NextResponse.json(
-        { error: 'Failed to process feedback. Please try again.' },
+        { error: 'server', message: 'Failed to process feedback. Please try again.' },
         { status: 500 },
       );
     }
   };
+}
+
+function checkStopHookConfig(workDir: string): string | undefined {
+  const settingsPath = `${workDir}/.claude/settings.local.json`;
+  try {
+    if (!existsSync(settingsPath)) {
+      return 'Stop hook config not found at .claude/settings.local.json — responses may not work.';
+    }
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    const hooks = settings?.hooks?.Stop;
+    if (!hooks || !Array.isArray(hooks) || hooks.length === 0) {
+      return 'No Stop hook configured in .claude/settings.local.json — responses may not work.';
+    }
+  } catch {
+    return 'Could not read Stop hook config — responses may not work.';
+  }
+  return undefined;
 }
 
 /**
@@ -143,18 +211,38 @@ export function handleFeedbackSubmit(appName: string) {
 
 /**
  * Returns a POST handler for /api/feedback/close
- * Kills the tmux session.
+ * Kills the tmux session and cleans up tmp files.
  */
-export function handleFeedbackClose() {
+export function handleFeedbackClose(appName: string) {
   return async function POST(request: NextRequest) {
     try {
       const { tmuxSession } = await request.json();
       if (tmuxSession) {
-        killFeedback(tmuxSession);
+        killFeedback(tmuxSession, appName);
+        removeSession(tmuxSession);
       }
       return NextResponse.json({ ok: true });
     } catch {
       return NextResponse.json({ error: 'Failed to close session' }, { status: 500 });
+    }
+  };
+}
+
+/**
+ * Returns a GET handler for /api/feedback/status
+ * Checks if a tmux session is still alive.
+ */
+export function handleFeedbackStatus() {
+  return async function GET(request: NextRequest) {
+    try {
+      const tmuxSession = request.nextUrl.searchParams.get('tmuxSession');
+      if (!tmuxSession) {
+        return NextResponse.json({ error: 'tmuxSession parameter required' }, { status: 400 });
+      }
+      const alive = isTmuxAlive(tmuxSession);
+      return NextResponse.json({ alive });
+    } catch {
+      return NextResponse.json({ alive: false });
     }
   };
 }

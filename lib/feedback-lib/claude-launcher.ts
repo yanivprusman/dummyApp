@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { execFile, execFileSync } from 'child_process';
-import { writeFileSync } from 'fs';
+import { writeFileSync, unlinkSync } from 'fs';
 import { getSessionEnv } from './session-env';
 
 export interface LaunchConfig {
@@ -98,9 +98,30 @@ export function sendMessage(tmuxSession: string, message: string, user = 'yaniv'
   ], { timeout: 5000 });
 }
 
-export function killFeedback(tmuxSession: string, user = 'yaniv'): boolean {
+export function killFeedback(tmuxSession: string, appName?: string, user = 'yaniv'): boolean {
   try {
     execFileSync('runuser', ['-u', user, '--', 'tmux', 'kill-session', '-t', tmuxSession], { timeout: 3000 });
+  } catch {
+    // Session may already be dead — still clean up tmp files
+  }
+
+  // Clean up tmp files
+  if (appName) {
+    for (const prefix of ['launch', 'claude']) {
+      try { unlinkSync(`/tmp/${appName}-${prefix}-${tmuxSession}.sh`); } catch {}
+      try { unlinkSync(`/tmp/${appName}-${prefix}-${tmuxSession}.log`); } catch {}
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Check if a tmux session is still alive.
+ */
+export function isTmuxAlive(tmuxSession: string, user = 'yaniv'): boolean {
+  try {
+    execFileSync('runuser', ['-u', user, '--', 'tmux', 'has-session', '-t', tmuxSession], { timeout: 3000 });
     return true;
   } catch {
     return false;

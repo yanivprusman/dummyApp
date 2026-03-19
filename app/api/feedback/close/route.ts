@@ -1,2 +1,2 @@
 import { handleFeedbackClose } from '@automate/feedback-lib';
-export const POST = handleFeedbackClose();
+export const POST = handleFeedbackClose('dummyApp');
