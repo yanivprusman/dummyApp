@@ -37,16 +37,16 @@ export interface FeedbackLabels {
 }
 
 const defaultLabels: FeedbackLabels = {
-  greeting: "Hi! What issue are you experiencing?",
-  title: "Report an Issue",
+  greeting: "Hi! Use this chat to report bugs, suggest features, or share any feedback with the development team. Describe what's on your mind and I'll help you put together a clear report.",
+  title: "Feedback",
   newChat: "New Chat",
   selectIssues: "Select the issues to submit:",
   submit: "Submit Selected",
   submitting: "Submitting...",
   issueSubmitted: "Issue #",
   error: "Something went wrong. Please try again.",
-  placeholder: "Describe your issue...",
-  button: "Report an Issue",
+  placeholder: "Describe your issue or idea...",
+  button: "Feedback",
   thinking: "Thinking...",
   endSession: "End Session",
   sessionActive: "Session active",
