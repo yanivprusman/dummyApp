@@ -14,8 +14,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body>{children}        <FeedbackChat />
-</body>
+      <body>
+        {children}
+        <FeedbackChat />
+      </body>
     </html>
   );
 }
