@@ -1,3 +1,6 @@
+// i18n translations
+export { feedbackTranslations } from './i18n';
+
 // Server-side API route handlers
 export {
   handleFeedbackMessage,
@@ -5,6 +8,8 @@ export {
   handleFeedbackSubmit,
   handleFeedbackClose,
   handleFeedbackStatus,
+  handleFeedbackSessionEnd,
+  handleFeedbackIssues,
 } from './api-handlers';
 
 // Lower-level server utilities (for custom integrations)

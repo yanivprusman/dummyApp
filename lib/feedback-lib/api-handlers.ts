@@ -4,17 +4,37 @@ import { existsSync, readFileSync } from 'fs';
 import { launchFeedback, sendMessage, killFeedback, isTmuxAlive } from './claude-launcher';
 import { waitForResponse, resolveResponse } from './pending-responses';
 
-/** Track last activity timestamp per tmux session for auto-cleanup */
-const sessionLastActivity = new Map<string, { timestamp: number; appName: string }>();
+/** Track last activity timestamp per tmux session for auto-cleanup.
+ *  Use globalThis to avoid Turbopack module duplication (same fix as pending-responses). */
+const SESSION_ACTIVITY_KEY = Symbol.for('feedback-lib:session-last-activity');
+const CLEANUP_STARTED_KEY = Symbol.for('feedback-lib:cleanup-interval-started');
+const SESSION_ID_MAP_KEY = Symbol.for('feedback-lib:session-id-to-tmux');
 const SESSION_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
-let cleanupIntervalStarted = false;
+type SessionInfo = { timestamp: number; appName: string };
+
+function getSessionActivityMap(): Map<string, SessionInfo> {
+  const g = globalThis as Record<symbol, unknown>;
+  if (!g[SESSION_ACTIVITY_KEY]) {
+    g[SESSION_ACTIVITY_KEY] = new Map<string, SessionInfo>();
+  }
+  return g[SESSION_ACTIVITY_KEY] as Map<string, SessionInfo>;
+}
+
+function isCleanupStarted(): boolean {
+  return !!(globalThis as Record<symbol, unknown>)[CLEANUP_STARTED_KEY];
+}
+
+function markCleanupStarted(): void {
+  (globalThis as Record<symbol, unknown>)[CLEANUP_STARTED_KEY] = true;
+}
 
 function startSessionCleanupInterval() {
-  if (cleanupIntervalStarted) return;
-  cleanupIntervalStarted = true;
+  if (isCleanupStarted()) return;
+  markCleanupStarted();
 
   setInterval(() => {
+    const sessionLastActivity = getSessionActivityMap();
     const now = Date.now();
     for (const [tmux, info] of sessionLastActivity.entries()) {
       if (now - info.timestamp > SESSION_TIMEOUT_MS) {
@@ -26,11 +46,29 @@ function startSessionCleanupInterval() {
 }
 
 function touchSession(tmuxSession: string, appName: string) {
-  sessionLastActivity.set(tmuxSession, { timestamp: Date.now(), appName });
+  getSessionActivityMap().set(tmuxSession, { timestamp: Date.now(), appName });
 }
 
 function removeSession(tmuxSession: string) {
-  sessionLastActivity.delete(tmuxSession);
+  getSessionActivityMap().delete(tmuxSession);
+  // Also remove from sessionId→tmux map
+  const idMap = getSessionIdMap();
+  for (const [sid, tmux] of idMap.entries()) {
+    if (tmux === tmuxSession) { idMap.delete(sid); break; }
+  }
+}
+
+/** Map Claude sessionId → { tmuxSession, appName } for SessionEnd hook lookup */
+function getSessionIdMap(): Map<string, { tmuxSession: string; appName: string }> {
+  const g = globalThis as Record<symbol, unknown>;
+  if (!g[SESSION_ID_MAP_KEY]) {
+    g[SESSION_ID_MAP_KEY] = new Map<string, { tmuxSession: string; appName: string }>();
+  }
+  return g[SESSION_ID_MAP_KEY] as Map<string, { tmuxSession: string; appName: string }>;
+}
+
+function trackSessionId(sessionId: string, tmuxSession: string, appName: string) {
+  getSessionIdMap().set(sessionId, { tmuxSession, appName });
 }
 
 /**
@@ -59,6 +97,7 @@ export function handleFeedbackMessage(appName: string, workDir: string) {
         const result = launchFeedback({ appName, workDir, firstMessage: message.trim() });
         csid = result.claudeSessionId;
         tmux = result.tmuxSession;
+        trackSessionId(csid, tmux, appName);
       } else {
         csid = sessionId;
         tmux = tmuxSession;
@@ -137,8 +176,11 @@ export function handleFeedbackResponse() {
       const body = await request.json();
       const { session_id, last_assistant_message } = body;
 
+      console.log(`[feedback-lib] handleFeedbackResponse received: session_id=${session_id}, has_message=${!!last_assistant_message}`);
+
       if (session_id && last_assistant_message) {
-        resolveResponse(session_id, last_assistant_message);
+        const resolved = resolveResponse(session_id, last_assistant_message);
+        console.log(`[feedback-lib] handleFeedbackResponse resolve result: ${resolved}`);
       }
 
       return NextResponse.json({});
@@ -245,4 +287,98 @@ export function handleFeedbackStatus() {
       return NextResponse.json({ alive: false });
     }
   };
+}
+
+/**
+ * Returns a POST handler for /api/feedback/session-end
+ * Called by the Claude Code SessionEnd hook when a session exits.
+ * Kills the associated tmux session and cleans up tracking state.
+ */
+export function handleFeedbackSessionEnd(appName: string) {
+  return async function POST(request: NextRequest) {
+    try {
+      const body = await request.json();
+      const { session_id } = body;
+
+      if (!session_id) {
+        return NextResponse.json({ ok: true }); // Nothing to do
+      }
+
+      const idMap = getSessionIdMap();
+      const entry = idMap.get(session_id);
+
+      if (entry) {
+        killFeedback(entry.tmuxSession, entry.appName);
+        removeSession(entry.tmuxSession);
+        console.log(`[feedback-lib] SessionEnd: killed tmux=${entry.tmuxSession} for session=${session_id}`);
+      } else {
+        console.log(`[feedback-lib] SessionEnd: no tracked tmux for session=${session_id}`);
+      }
+
+      return NextResponse.json({ ok: true });
+    } catch (err) {
+      console.error(`[feedback-lib] SessionEnd error:`, err);
+      return NextResponse.json({ ok: true }); // Don't fail the hook
+    }
+  };
+}
+
+/**
+ * Returns a handler for /api/feedback/issues
+ * GET: list issues for the app
+ * POST: close or reopen an issue
+ */
+export function handleFeedbackIssues(appName: string) {
+  async function GET() {
+    try {
+      const output = await new Promise<string>((resolve, reject) => {
+        execFile(
+          '/usr/local/bin/daemon',
+          ['send', 'listIssues', '--app', appName],
+          { timeout: 10_000, maxBuffer: 256 * 1024 },
+          (error, stdout, stderr) => {
+            if (error) { reject(new Error(stderr || error.message)); return; }
+            resolve(stdout.trim());
+          },
+        );
+      });
+
+      // Parse daemon output — it returns JSON
+      const issues = JSON.parse(output);
+      return NextResponse.json({ issues });
+    } catch (err) {
+      console.error(`${appName} issues list error:`, err);
+      return NextResponse.json({ error: 'Failed to list issues' }, { status: 500 });
+    }
+  }
+
+  async function POST(request: NextRequest) {
+    try {
+      const { action, issueNumber } = await request.json();
+
+      if (!issueNumber || !['close', 'reopen'].includes(action)) {
+        return NextResponse.json({ error: 'action (close|reopen) and issueNumber required' }, { status: 400 });
+      }
+
+      const command = action === 'close' ? 'closeIssue' : 'reopenIssue';
+      const output = await new Promise<string>((resolve, reject) => {
+        execFile(
+          '/usr/local/bin/daemon',
+          ['send', command, '--app', appName, '--issueNumber', String(issueNumber)],
+          { timeout: 10_000, maxBuffer: 64 * 1024 },
+          (error, stdout, stderr) => {
+            if (error) { reject(new Error(stderr || error.message)); return; }
+            resolve(stdout.trim());
+          },
+        );
+      });
+
+      return NextResponse.json({ ok: true, output });
+    } catch (err) {
+      console.error(`${appName} issue action error:`, err);
+      return NextResponse.json({ error: 'Failed to perform action' }, { status: 500 });
+    }
+  }
+
+  return { GET, POST };
 }

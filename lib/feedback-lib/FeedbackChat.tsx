@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { feedbackTranslations } from "./i18n";
 
 interface Message {
   role: "user" | "assistant";
@@ -34,11 +35,12 @@ export interface FeedbackLabels {
   sessionActive: string;
   timeoutError: string;
   networkError: string;
+  viewIssues: string;
 }
 
 const defaultLabels: FeedbackLabels = {
   greeting: "Hi! Use this chat to report bugs, suggest features, or share any feedback with the development team. Describe what's on your mind and I'll help you put together a clear report.",
-  title: "Feedback",
+  title: "Issue Clarifier",
   newChat: "New Chat",
   selectIssues: "Select the issues to submit:",
   submit: "Submit Selected",
@@ -46,21 +48,26 @@ const defaultLabels: FeedbackLabels = {
   issueSubmitted: "Issue #",
   error: "Something went wrong. Please try again.",
   placeholder: "Describe your issue or idea...",
-  button: "Feedback",
+  button: "Issue Clarifier",
   thinking: "Thinking...",
   endSession: "End Session",
   sessionActive: "Session active",
   timeoutError: "Claude did not respond in time. The Stop hook may be misconfigured.",
   networkError: "Network error — check your connection and try again.",
+  viewIssues: "View Issues",
 };
 
 interface FeedbackChatProps {
-  /** Override default English labels (for i18n or customization) */
+  /** Language code for built-in translations (e.g. "en", "he"). Defaults to "en". */
+  lang?: string;
+  /** Override individual labels (merged on top of lang translations) */
   labels?: Partial<FeedbackLabels>;
   /** Custom accent color class (default: "bg-indigo-600 hover:bg-indigo-700") */
   accentClass?: string;
   /** Color scheme: 'system' follows OS preference, 'light' or 'dark' forces a mode */
   colorScheme?: 'system' | 'light' | 'dark';
+  /** Path to the issues page (e.g. "/issues"). If set, shows a link in the header. */
+  issuesPath?: string;
 }
 
 const SESSION_STORAGE_KEY = "feedback-chat-session";
@@ -83,8 +90,9 @@ function useSystemDark() {
   return dark;
 }
 
-export function FeedbackChat({ labels: labelOverrides, accentClass, colorScheme = 'system' }: FeedbackChatProps = {}) {
-  const labels = { ...defaultLabels, ...labelOverrides };
+export function FeedbackChat({ lang, labels: labelOverrides, accentClass, colorScheme = 'system', issuesPath }: FeedbackChatProps = {}) {
+  const langLabels = lang ? (feedbackTranslations[lang] ?? defaultLabels) : defaultLabels;
+  const labels = { ...langLabels, ...labelOverrides };
   const accent = accentClass ?? "bg-indigo-600 hover:bg-indigo-700";
   const accentBase = accent.split(" ")[0]; // e.g. "bg-indigo-600"
   const systemDark = useSystemDark();
@@ -148,6 +156,24 @@ export function FeedbackChat({ labels: labelOverrides, accentClass, colorScheme 
       sessionStorage.removeItem(SESSION_STORAGE_KEY);
     }
   }, [restoredSession]);
+
+  // Poll session status while active — detect when tmux dies (e.g. SessionEnd hook killed it)
+  useEffect(() => {
+    if (!hasSession || !tmuxSession) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/feedback/status?tmuxSession=${encodeURIComponent(tmuxSession)}`);
+        const data = await res.json();
+        if (!data.alive) {
+          setSessionId(null);
+          setTmuxSession(null);
+          setHookWarning(null);
+          sessionStorage.removeItem(SESSION_STORAGE_KEY);
+        }
+      } catch { /* ignore fetch errors */ }
+    }, 15_000);
+    return () => clearInterval(interval);
+  }, [hasSession, tmuxSession]);
 
   // Clean up session on page unload via sendBeacon
   useEffect(() => {
@@ -353,6 +379,11 @@ export function FeedbackChat({ labels: labelOverrides, accentClass, colorScheme 
           <button onClick={handleNewChat} className="text-xs text-indigo-200 hover:text-white transition-colors" title={labels.newChat}>
             {labels.newChat}
           </button>
+          {issuesPath && (
+            <a href={issuesPath} className="text-xs text-indigo-200 hover:text-white transition-colors" title={labels.viewIssues}>
+              {labels.viewIssues}
+            </a>
+          )}
           <button onClick={handleClose} className="text-indigo-200 hover:text-white transition-colors">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-5 h-5">
               <path d="M18 6L6 18M6 6l12 12" />
