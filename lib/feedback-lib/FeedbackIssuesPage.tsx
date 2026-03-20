@@ -22,6 +22,7 @@ export interface IssuesPageLabels {
   open: string;
   closed: string;
   inProgress: string;
+  review: string;
   edit: string;
   save: string;
   cancel: string;
@@ -35,6 +36,7 @@ const defaultLabels: IssuesPageLabels = {
   open: "Open",
   closed: "Closed",
   inProgress: "In Progress",
+  review: "Needs Review",
   edit: "Edit",
   save: "Save",
   cancel: "Cancel",
@@ -48,6 +50,7 @@ const heLabels: IssuesPageLabels = {
   open: "פתוח",
   closed: "סגור",
   inProgress: "בטיפול",
+  review: "ממתין לאישור",
   edit: "עריכה",
   save: "שמירה",
   cancel: "ביטול",
@@ -81,6 +84,7 @@ function statusBadge(status: string, labels: IssuesPageLabels, isDark: boolean) 
     open: { label: labels.open, bg: isDark ? "bg-green-900 text-green-300" : "bg-green-100 text-green-800" },
     closed: { label: labels.closed, bg: isDark ? "bg-slate-700 text-slate-400" : "bg-slate-200 text-slate-600" },
     in_progress: { label: labels.inProgress, bg: isDark ? "bg-yellow-900 text-yellow-300" : "bg-yellow-100 text-yellow-800" },
+    review: { label: labels.review, bg: isDark ? "bg-purple-900 text-purple-300" : "bg-purple-100 text-purple-800" },
   };
   const entry = map[status] ?? map.open;
   return (
@@ -126,7 +130,7 @@ export function FeedbackIssuesPage({ lang, labels: labelOverrides, colorScheme =
       const list = all
         .filter(i => i.labels?.includes("user-reported"))
         .sort((a, b) => {
-          const order: Record<string, number> = { open: 0, in_progress: 1, closed: 2 };
+          const order: Record<string, number> = { open: 0, in_progress: 1, review: 2, closed: 3 };
           const statusDiff = (order[a.status] ?? 0) - (order[b.status] ?? 0);
           if (statusDiff !== 0) return statusDiff;
           return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
