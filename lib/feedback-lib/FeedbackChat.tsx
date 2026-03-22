@@ -315,6 +315,7 @@ export function FeedbackChat({ lang, labels: labelOverrides, accentClass, colorS
       setSubmitResults(data.results);
       setIssues(null);
       setCheckedIssues([]);
+      closeSession();
     } catch {
       setMessages((prev) => [...prev, { role: "assistant", text: labels.error }]);
     } finally {
@@ -380,7 +381,7 @@ export function FeedbackChat({ lang, labels: labelOverrides, accentClass, colorS
             {labels.newChat}
           </button>
           {issuesPath && (
-            <a href={issuesPath} className="text-xs text-indigo-200 hover:text-white transition-colors" title={labels.viewIssues}>
+            <a href={issuesPath} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-200 hover:text-white transition-colors" title={labels.viewIssues}>
               {labels.viewIssues}
             </a>
           )}
