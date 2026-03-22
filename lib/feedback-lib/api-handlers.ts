@@ -54,7 +54,7 @@ function removeSession(tmuxSession: string) {
   // Also remove from sessionId→tmux map
   const idMap = getSessionIdMap();
   for (const [sid, tmux] of idMap.entries()) {
-    if (tmux === tmuxSession) { idMap.delete(sid); break; }
+    if (tmux.tmuxSession === tmuxSession) { idMap.delete(sid); break; }
   }
 }
 
@@ -354,17 +354,27 @@ export function handleFeedbackIssues(appName: string) {
 
   async function POST(request: NextRequest) {
     try {
-      const { action, issueNumber } = await request.json();
+      const body = await request.json();
+      const { action, issueNumber } = body;
 
-      if (!issueNumber || !['close', 'reopen'].includes(action)) {
-        return NextResponse.json({ error: 'action (close|reopen) and issueNumber required' }, { status: 400 });
+      if (!issueNumber || !['close', 'reopen', 'update'].includes(action)) {
+        return NextResponse.json({ error: 'action (close|reopen|update) and issueNumber required' }, { status: 400 });
       }
 
-      const command = action === 'close' ? 'closeIssue' : 'reopenIssue';
+      let args: string[];
+      if (action === 'update') {
+        args = ['send', 'updateIssue', '--app', appName, '--issueNumber', String(issueNumber)];
+        if (body.title) args.push('--title', body.title);
+        if (body.description !== undefined) args.push('--description', body.description);
+      } else {
+        const command = action === 'close' ? 'closeIssue' : 'reopenIssue';
+        args = ['send', command, '--app', appName, '--issueNumber', String(issueNumber)];
+      }
+
       const output = await new Promise<string>((resolve, reject) => {
         execFile(
           '/usr/local/bin/daemon',
-          ['send', command, '--app', appName, '--issueNumber', String(issueNumber)],
+          args,
           { timeout: 10_000, maxBuffer: 64 * 1024 },
           (error, stdout, stderr) => {
             if (error) { reject(new Error(stderr || error.message)); return; }
