@@ -20,8 +20,7 @@
     "build": "next build",
     "dev": "next dev",
     "lint": "eslint",
-    "start": "next start",
-    "sync-feedback-lib": "rsync -a --delete /opt/automateLinux/packages/feedback-lib/src/ lib/feedback-lib/"
+    "start": "next start"
   },
   "version": "0.1.0"
 }
