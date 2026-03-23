@@ -345,7 +345,7 @@ export function handleFeedbackIssues(appName: string) {
 
       // Parse daemon output — it returns JSON
       const issues = JSON.parse(output);
-      return NextResponse.json({ issues });
+      return NextResponse.json({ issues, appName });
     } catch (err) {
       console.error(`${appName} issues list error:`, err);
       return NextResponse.json({ error: 'Failed to list issues' }, { status: 500 });

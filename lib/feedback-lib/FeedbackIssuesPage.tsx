@@ -110,6 +110,7 @@ export function FeedbackIssuesPage({ lang, labels: labelOverrides, colorScheme =
   const systemDark = useSystemDark();
   const isDark = colorScheme === "dark" || (colorScheme !== "light" && systemDark);
 
+  const [appName, setAppName] = useState<string | null>(null);
   const [issues, setIssues] = useState<Issue[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -125,6 +126,7 @@ export function FeedbackIssuesPage({ lang, labels: labelOverrides, colorScheme =
       const res = await fetch("/api/feedback/issues");
       if (!res.ok) throw new Error("fetch failed");
       const data = await res.json();
+      if (data.appName) setAppName(data.appName);
       const all: Issue[] = Array.isArray(data.issues) ? data.issues : [];
       // Only show user-reported issues, sorted: open/in_progress first, then closed; newest first within each group
       const list = all
@@ -180,7 +182,7 @@ export function FeedbackIssuesPage({ lang, labels: labelOverrides, colorScheme =
       <div className="max-w-3xl mx-auto">
         {/* Header */}
         <div className="mb-6">
-          <h1 className="text-2xl font-bold">{labels.pageTitle}</h1>
+          <h1 className="text-2xl font-bold">{appName ? `${appName} — ${labels.pageTitle}` : labels.pageTitle}</h1>
         </div>
 
         {loading && <p className={isDark ? "text-slate-400" : "text-slate-500"}>{labels.loading}</p>}
