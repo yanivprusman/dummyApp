@@ -76,7 +76,7 @@ export function launchFeedback(config: LaunchConfig): LaunchResult {
       workDir,
       scriptFile: scriptLogFile,
       termTitle: tmuxSession,
-      useTmux: true,
+      launchMethod: 'tmux',
       source: 'terminal',
     }),
   }).catch(() => {});
@@ -192,7 +192,7 @@ export function launchFix(config: FixConfig): LaunchResult {
       workDir,
       scriptFile: scriptLogFile,
       termTitle: tmuxSession,
-      useTmux: true,
+      launchMethod: 'tmux',
       source: 'terminal',
     }),
   }).catch(() => {});
@@ -257,7 +257,7 @@ export function launchConclude(config: ConcludeConfig): { tmuxSession: string } 
       workDir,
       scriptFile: scriptLogFile,
       termTitle: tmuxSession,
-      useTmux: true,
+      launchMethod: 'tmux',
       source: 'terminal',
     }),
   }).catch(() => {});
