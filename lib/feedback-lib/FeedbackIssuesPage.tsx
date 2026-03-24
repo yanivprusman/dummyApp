@@ -321,20 +321,22 @@ export function FeedbackIssuesPage({ lang, labels: labelOverrides, colorScheme =
           <h1 className="text-2xl font-bold">{appName ? `${appName} — ${labels.pageTitle}` : labels.pageTitle}</h1>
           <div className="flex items-center gap-2">
           <button
+            data-id="refresh-issues"
             onClick={() => fetchIssues()}
             title={labels.refresh}
-            className={`p-2 rounded-lg transition-colors ${btnClass}`}
+            className={`p-2 rounded-lg transition-colors cursor-pointer ${btnClass} active:scale-95`}
           >
             <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></svg>
           </button>
           <button
+            data-id="fix-with-claude"
             onClick={handleFixWithClaude}
             disabled={selectedCount === 0 || fixLoading}
             className={`text-sm px-4 py-2 rounded-lg transition-colors flex items-center gap-2 ${
               selectedCount > 0
-                ? isDark ? "bg-purple-700 hover:bg-purple-600 text-white" : "bg-purple-500 hover:bg-purple-600 text-white"
+                ? isDark ? "bg-purple-700 hover:bg-purple-600 text-white cursor-pointer" : "bg-purple-500 hover:bg-purple-600 text-white cursor-pointer"
                 : isDark ? "bg-slate-700 text-slate-500 cursor-not-allowed" : "bg-slate-200 text-slate-400 cursor-not-allowed"
-            } disabled:opacity-50`}
+            } disabled:opacity-50 active:scale-95`}
           >
             {fixLoading ? (
               <>{labels.launching}</>
@@ -372,12 +374,14 @@ export function FeedbackIssuesPage({ lang, labels: labelOverrides, colorScheme =
                       {statusBadge(issue.status, labels, isDark)}
                     </div>
                     <input
+                      data-id="edit-title"
                       type="text"
                       value={editTitle}
                       onChange={e => setEditTitle(e.target.value)}
                       className={`w-full px-3 py-1.5 rounded-md border text-sm font-medium ${isDark ? "bg-slate-700 border-slate-600 text-slate-200" : "bg-white border-slate-300 text-slate-900"}`}
                     />
                     <textarea
+                      data-id="edit-description"
                       value={editDesc}
                       onChange={e => setEditDesc(e.target.value)}
                       rows={4}
@@ -385,15 +389,17 @@ export function FeedbackIssuesPage({ lang, labels: labelOverrides, colorScheme =
                     />
                     <div className="flex gap-2">
                       <button
+                        data-id="save-edit"
                         onClick={() => handleSaveEdit(issue.issueNumber)}
                         disabled={actionLoading === issue.issueNumber}
-                        className={`text-xs px-3 py-1.5 rounded-md transition-colors ${btnPrimaryClass} disabled:opacity-50`}
+                        className={`text-xs px-3 py-1.5 rounded-md transition-colors cursor-pointer ${btnPrimaryClass} disabled:opacity-50 active:scale-95`}
                       >
                         {labels.save}
                       </button>
                       <button
+                        data-id="cancel-edit"
                         onClick={() => setEditingId(null)}
-                        className={`text-xs px-3 py-1.5 rounded-md transition-colors ${btnClass}`}
+                        className={`text-xs px-3 py-1.5 rounded-md transition-colors cursor-pointer ${btnClass} active:scale-95`}
                       >
                         {labels.cancel}
                       </button>
@@ -405,6 +411,7 @@ export function FeedbackIssuesPage({ lang, labels: labelOverrides, colorScheme =
                     {canSelect && (
                       <div className="pt-1 flex-shrink-0">
                         <input
+                          data-id={`select-issue-${issue.issueNumber}`}
                           type="checkbox"
                           checked={selectedIds.has(issue.issueNumber)}
                           onChange={() => toggleSelect(issue.issueNumber)}
@@ -446,8 +453,9 @@ export function FeedbackIssuesPage({ lang, labels: labelOverrides, colorScheme =
                       {/* Mark as Reviewed button for review-status issues */}
                       {isReview && (
                         <button
+                          data-id={`mark-reviewed-${issue.issueNumber}`}
                           onClick={() => openReviewDialog(issue)}
-                          className={`text-xs px-3 py-1.5 rounded-md transition-colors flex items-center gap-1.5 ${
+                          className={`text-xs px-3 py-1.5 rounded-md transition-colors flex items-center gap-1.5 cursor-pointer active:scale-95 ${
                             isDark ? "bg-purple-800 hover:bg-purple-700 text-purple-200" : "bg-purple-100 hover:bg-purple-200 text-purple-700"
                           }`}
                         >
@@ -456,8 +464,9 @@ export function FeedbackIssuesPage({ lang, labels: labelOverrides, colorScheme =
                         </button>
                       )}
                       <button
+                        data-id={`edit-issue-${issue.issueNumber}`}
                         onClick={() => startEdit(issue)}
-                        className={`text-xs px-3 py-1.5 rounded-md transition-colors ${btnClass}`}
+                        className={`text-xs px-3 py-1.5 rounded-md transition-colors cursor-pointer ${btnClass} active:scale-95`}
                       >
                         {labels.edit}
                       </button>
@@ -482,7 +491,7 @@ export function FeedbackIssuesPage({ lang, labels: labelOverrides, colorScheme =
 
             {/* Trigger issue (always selected, can't deselect) */}
             <label className="flex items-center gap-3 py-2">
-              <input type="checkbox" checked disabled className="w-4 h-4 accent-purple-500" />
+              <input data-id="review-trigger-issue" type="checkbox" checked disabled className="w-4 h-4 accent-purple-500" />
               <span className="text-sm">
                 <span className={`font-mono text-xs ${isDark ? "text-slate-500" : "text-slate-400"}`}>#{reviewDialog.trigger.issueNumber}</span>
                 {" "}{reviewDialog.trigger.title}
@@ -498,6 +507,7 @@ export function FeedbackIssuesPage({ lang, labels: labelOverrides, colorScheme =
                 {reviewDialog.relatedIssues.map(ri => (
                   <label key={ri.issueNumber} className="flex items-center gap-3 py-1.5 cursor-pointer">
                     <input
+                      data-id={`review-related-${ri.issueNumber}`}
                       type="checkbox"
                       checked={reviewDialog.selectedNumbers.has(ri.issueNumber)}
                       onChange={() => toggleReviewIssue(ri.issueNumber)}
@@ -515,6 +525,7 @@ export function FeedbackIssuesPage({ lang, labels: labelOverrides, colorScheme =
             {/* Conclude toggle */}
             <label className={`flex items-center gap-3 mt-4 py-2 px-3 rounded-lg cursor-pointer ${isDark ? "bg-slate-700/50" : "bg-slate-50"}`}>
               <input
+                data-id="review-conclude-toggle"
                 type="checkbox"
                 checked={reviewDialog.conclude}
                 onChange={() => setReviewDialog(prev => prev ? { ...prev, conclude: !prev.conclude } : null)}
@@ -526,18 +537,20 @@ export function FeedbackIssuesPage({ lang, labels: labelOverrides, colorScheme =
             {/* Actions */}
             <div className="flex justify-end gap-3 mt-6">
               <button
+                data-id="review-cancel"
                 onClick={() => setReviewDialog(null)}
                 disabled={reviewLoading}
-                className={`text-sm px-4 py-2 rounded-lg transition-colors ${btnClass}`}
+                className={`text-sm px-4 py-2 rounded-lg transition-colors cursor-pointer ${btnClass} active:scale-95`}
               >
                 {labels.cancel}
               </button>
               <button
+                data-id="review-confirm"
                 onClick={handleConfirmReview}
                 disabled={reviewLoading}
-                className={`text-sm px-4 py-2 rounded-lg transition-colors flex items-center gap-2 ${
+                className={`text-sm px-4 py-2 rounded-lg transition-colors flex items-center gap-2 cursor-pointer ${
                   isDark ? "bg-purple-700 hover:bg-purple-600 text-white" : "bg-purple-500 hover:bg-purple-600 text-white"
-                } disabled:opacity-50`}
+                } disabled:opacity-50 active:scale-95`}
               >
                 {reviewLoading ? (
                   <>{labels.reviewing}</>
