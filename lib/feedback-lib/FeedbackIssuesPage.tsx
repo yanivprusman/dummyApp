@@ -34,6 +34,7 @@ export interface IssuesPageLabels {
   alsoInSession: string;
   launching: string;
   reviewing: string;
+  refresh: string;
 }
 
 const defaultLabels: IssuesPageLabels = {
@@ -54,6 +55,7 @@ const defaultLabels: IssuesPageLabels = {
   alsoInSession: "Also fixed in this session:",
   launching: "Launching...",
   reviewing: "Reviewing...",
+  refresh: "Refresh",
 };
 
 const heLabels: IssuesPageLabels = {
@@ -74,6 +76,7 @@ const heLabels: IssuesPageLabels = {
   alsoInSession: "תוקנו גם בסשן זה:",
   launching: "משיק...",
   reviewing: "מסמן...",
+  refresh: "רענון",
 };
 
 const issuesTranslations: Record<string, IssuesPageLabels> = {
@@ -182,6 +185,8 @@ export function FeedbackIssuesPage({ lang, labels: labelOverrides, colorScheme =
 
   useEffect(() => {
     fetchIssues();
+    const interval = setInterval(fetchIssues, 15_000);
+    return () => clearInterval(interval);
   }, [fetchIssues]);
 
   function toggleSelect(issueNumber: number) {
@@ -314,6 +319,14 @@ export function FeedbackIssuesPage({ lang, labels: labelOverrides, colorScheme =
         {/* Header */}
         <div className="mb-6 flex items-center justify-between gap-3">
           <h1 className="text-2xl font-bold">{appName ? `${appName} — ${labels.pageTitle}` : labels.pageTitle}</h1>
+          <div className="flex items-center gap-2">
+          <button
+            onClick={() => fetchIssues()}
+            title={labels.refresh}
+            className={`p-2 rounded-lg transition-colors ${btnClass}`}
+          >
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></svg>
+          </button>
           <button
             onClick={handleFixWithClaude}
             disabled={selectedCount === 0 || fixLoading}
@@ -332,6 +345,7 @@ export function FeedbackIssuesPage({ lang, labels: labelOverrides, colorScheme =
               </>
             )}
           </button>
+          </div>
         </div>
 
         {loading && <p className={isDark ? "text-slate-400" : "text-slate-500"}>{labels.loading}</p>}
