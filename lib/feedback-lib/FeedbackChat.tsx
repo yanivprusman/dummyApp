@@ -198,6 +198,13 @@ export function FeedbackChat({ lang, labels: labelOverrides, accentClass, colorS
     }
   }, [open]);
 
+  // Re-focus textarea after loading completes (Enter disables it, losing focus)
+  useEffect(() => {
+    if (!loading && open && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [loading, open]);
+
   function handleOpen() {
     setOpen(true);
     if (messages.length === 0) {
