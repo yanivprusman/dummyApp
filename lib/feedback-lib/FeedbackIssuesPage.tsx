@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { feedbackTranslations } from "./i18n";
 
 interface Issue {
   issueNumber: number;
@@ -12,6 +11,9 @@ interface Issue {
   createdAt: string;
   closedAt?: string;
   insights?: string;
+  claudeSessionId?: string;
+  claudeSessionIds?: string[];
+  claudeLaunchDir?: string;
 }
 
 export interface IssuesPageLabels {
@@ -26,6 +28,12 @@ export interface IssuesPageLabels {
   edit: string;
   save: string;
   cancel: string;
+  fixWithClaude: string;
+  markReviewed: string;
+  conclude: string;
+  alsoInSession: string;
+  launching: string;
+  reviewing: string;
 }
 
 const defaultLabels: IssuesPageLabels = {
@@ -40,6 +48,12 @@ const defaultLabels: IssuesPageLabels = {
   edit: "Edit",
   save: "Save",
   cancel: "Cancel",
+  fixWithClaude: "Fix with Claude",
+  markReviewed: "Mark as Reviewed",
+  conclude: "Run conclude (document work)",
+  alsoInSession: "Also fixed in this session:",
+  launching: "Launching...",
+  reviewing: "Reviewing...",
 };
 
 const heLabels: IssuesPageLabels = {
@@ -54,6 +68,12 @@ const heLabels: IssuesPageLabels = {
   edit: "עריכה",
   save: "שמירה",
   cancel: "ביטול",
+  fixWithClaude: "תיקון עם Claude",
+  markReviewed: "סימון כנבדק",
+  conclude: "תיעוד עבודה",
+  alsoInSession: "תוקנו גם בסשן זה:",
+  launching: "משיק...",
+  reviewing: "מסמן...",
 };
 
 const issuesTranslations: Record<string, IssuesPageLabels> = {
@@ -65,6 +85,13 @@ interface FeedbackIssuesPageProps {
   lang?: string;
   labels?: Partial<IssuesPageLabels>;
   colorScheme?: "system" | "light" | "dark";
+}
+
+interface ReviewDialogState {
+  trigger: Issue;
+  relatedIssues: Issue[];
+  selectedNumbers: Set<number>;
+  conclude: boolean;
 }
 
 function useSystemDark() {
@@ -120,6 +147,14 @@ export function FeedbackIssuesPage({ lang, labels: labelOverrides, colorScheme =
   const [editTitle, setEditTitle] = useState("");
   const [editDesc, setEditDesc] = useState("");
 
+  // Selection for fix
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [fixLoading, setFixLoading] = useState(false);
+
+  // Review dialog
+  const [reviewDialog, setReviewDialog] = useState<ReviewDialogState | null>(null);
+  const [reviewLoading, setReviewLoading] = useState(false);
+
   const fetchIssues = useCallback(async () => {
     try {
       setError(null);
@@ -128,7 +163,7 @@ export function FeedbackIssuesPage({ lang, labels: labelOverrides, colorScheme =
       const data = await res.json();
       if (data.appName) setAppName(data.appName);
       const all: Issue[] = Array.isArray(data.issues) ? data.issues : [];
-      // Only show user-reported issues, sorted: open/in_progress first, then closed; newest first within each group
+      // Only show user-reported issues, sorted: open/in_progress first, then review, then closed; newest first within each group
       const list = all
         .filter(i => i.labels?.includes("user-reported"))
         .sort((a, b) => {
@@ -148,6 +183,15 @@ export function FeedbackIssuesPage({ lang, labels: labelOverrides, colorScheme =
   useEffect(() => {
     fetchIssues();
   }, [fetchIssues]);
+
+  function toggleSelect(issueNumber: number) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(issueNumber)) next.delete(issueNumber);
+      else next.add(issueNumber);
+      return next;
+    });
+  }
 
   function startEdit(issue: Issue) {
     setEditingId(issue.issueNumber);
@@ -174,15 +218,120 @@ export function FeedbackIssuesPage({ lang, labels: labelOverrides, colorScheme =
     setActionLoading(null);
   }
 
+  async function handleFixWithClaude() {
+    const selected = issues.filter(i => selectedIds.has(i.issueNumber) && i.status !== "closed");
+    if (selected.length === 0) return;
+    setFixLoading(true);
+    try {
+      const res = await fetch("/api/feedback/issues", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "fix",
+          issues: selected.map(i => ({ number: i.issueNumber, title: i.title })),
+        }),
+      });
+      if (res.ok) {
+        // Optimistically mark as in_progress
+        setIssues(prev => prev.map(i =>
+          selectedIds.has(i.issueNumber) ? { ...i, status: "in_progress" } : i
+        ));
+        setSelectedIds(new Set());
+      }
+    } catch { /* ignore */ }
+    setFixLoading(false);
+  }
+
+  function openReviewDialog(issue: Issue) {
+    // Find other review-status issues with the same claudeSessionId
+    const related = issue.claudeSessionId
+      ? issues.filter(i =>
+          i.issueNumber !== issue.issueNumber &&
+          i.status === "review" &&
+          i.claudeSessionId === issue.claudeSessionId
+        )
+      : [];
+
+    const allNumbers = new Set([issue.issueNumber, ...related.map(i => i.issueNumber)]);
+    setReviewDialog({
+      trigger: issue,
+      relatedIssues: related,
+      selectedNumbers: allNumbers,
+      conclude: true,
+    });
+  }
+
+  function toggleReviewIssue(issueNumber: number) {
+    if (!reviewDialog) return;
+    // Don't allow deselecting the trigger issue
+    if (issueNumber === reviewDialog.trigger.issueNumber) return;
+    setReviewDialog(prev => {
+      if (!prev) return null;
+      const next = new Set(prev.selectedNumbers);
+      if (next.has(issueNumber)) next.delete(issueNumber);
+      else next.add(issueNumber);
+      return { ...prev, selectedNumbers: next };
+    });
+  }
+
+  async function handleConfirmReview() {
+    if (!reviewDialog) return;
+    setReviewLoading(true);
+    try {
+      const res = await fetch("/api/feedback/issues", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "reviewed",
+          issueNumbers: Array.from(reviewDialog.selectedNumbers),
+          conclude: reviewDialog.conclude,
+          claudeSessionId: reviewDialog.trigger.claudeSessionId,
+          claudeLaunchDir: reviewDialog.trigger.claudeLaunchDir,
+        }),
+      });
+      if (res.ok) {
+        // Optimistically mark as closed
+        setIssues(prev => prev.map(i =>
+          reviewDialog.selectedNumbers.has(i.issueNumber) ? { ...i, status: "closed" } : i
+        ));
+        setReviewDialog(null);
+      }
+    } catch { /* ignore */ }
+    setReviewLoading(false);
+  }
+
+  const selectedCount = issues.filter(i => selectedIds.has(i.issueNumber) && i.status !== "closed" && i.status !== "review").length;
+
   const bgClass = isDark ? "bg-slate-900 text-slate-200" : "bg-white text-slate-900";
   const cardClass = isDark ? "bg-slate-800 border-slate-700" : "bg-white border-slate-200";
+  const btnClass = isDark ? "bg-slate-700 hover:bg-slate-600 text-slate-300" : "bg-slate-100 hover:bg-slate-200 text-slate-700";
+  const btnPrimaryClass = isDark ? "bg-indigo-700 hover:bg-indigo-600 text-white" : "bg-indigo-500 hover:bg-indigo-600 text-white";
+  const dialogBgClass = isDark ? "bg-slate-800 border-slate-600" : "bg-white border-slate-300";
 
   return (
     <div className={`min-h-screen ${bgClass} p-6`}>
       <div className="max-w-3xl mx-auto">
         {/* Header */}
-        <div className="mb-6">
+        <div className="mb-6 flex items-center justify-between gap-3">
           <h1 className="text-2xl font-bold">{appName ? `${appName} — ${labels.pageTitle}` : labels.pageTitle}</h1>
+          <button
+            onClick={handleFixWithClaude}
+            disabled={selectedCount === 0 || fixLoading}
+            className={`text-sm px-4 py-2 rounded-lg transition-colors flex items-center gap-2 ${
+              selectedCount > 0
+                ? isDark ? "bg-purple-700 hover:bg-purple-600 text-white" : "bg-purple-500 hover:bg-purple-600 text-white"
+                : isDark ? "bg-slate-700 text-slate-500 cursor-not-allowed" : "bg-slate-200 text-slate-400 cursor-not-allowed"
+            } disabled:opacity-50`}
+          >
+            {fixLoading ? (
+              <>{labels.launching}</>
+            ) : (
+              <>
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3z" /><path d="M18 14l1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3z" /></svg>
+                {labels.fixWithClaude}{selectedCount > 0 ? ` (${selectedCount})` : ""}
+              </>
+            )}
+          </button>
         </div>
 
         {loading && <p className={isDark ? "text-slate-400" : "text-slate-500"}>{labels.loading}</p>}
@@ -197,9 +346,11 @@ export function FeedbackIssuesPage({ lang, labels: labelOverrides, colorScheme =
             const isExpanded = expandedIds.has(issue.issueNumber);
             const isEditing = editingId === issue.issueNumber;
             const hasLongDesc = issue.description && issue.description.length > 120;
+            const canSelect = issue.status !== "closed" && issue.status !== "review";
+            const isReview = issue.status === "review";
 
             return (
-              <div key={issue.issueNumber} className={`border rounded-lg p-4 ${cardClass} transition-colors`}>
+              <div key={issue.issueNumber} className={`border rounded-lg p-4 ${cardClass} transition-colors ${isReview ? (isDark ? "border-purple-700/50" : "border-purple-200") : ""}`}>
                 {isEditing ? (
                   <div className="space-y-3">
                     <div className="flex items-center gap-2 mb-1">
@@ -222,20 +373,32 @@ export function FeedbackIssuesPage({ lang, labels: labelOverrides, colorScheme =
                       <button
                         onClick={() => handleSaveEdit(issue.issueNumber)}
                         disabled={actionLoading === issue.issueNumber}
-                        className={`text-xs px-3 py-1.5 rounded-md transition-colors ${isDark ? "bg-indigo-700 hover:bg-indigo-600 text-white" : "bg-indigo-500 hover:bg-indigo-600 text-white"} disabled:opacity-50`}
+                        className={`text-xs px-3 py-1.5 rounded-md transition-colors ${btnPrimaryClass} disabled:opacity-50`}
                       >
                         {labels.save}
                       </button>
                       <button
                         onClick={() => setEditingId(null)}
-                        className={`text-xs px-3 py-1.5 rounded-md transition-colors ${isDark ? "bg-slate-700 hover:bg-slate-600 text-slate-300" : "bg-slate-100 hover:bg-slate-200 text-slate-700"}`}
+                        className={`text-xs px-3 py-1.5 rounded-md transition-colors ${btnClass}`}
                       >
                         {labels.cancel}
                       </button>
                     </div>
                   </div>
                 ) : (
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    {/* Checkbox for selectable issues */}
+                    {canSelect && (
+                      <div className="pt-1 flex-shrink-0">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(issue.issueNumber)}
+                          onChange={() => toggleSelect(issue.issueNumber)}
+                          className="w-4 h-4 accent-purple-500 cursor-pointer"
+                        />
+                      </div>
+                    )}
+
                     <div
                       className="flex-1 min-w-0 cursor-pointer"
                       onClick={() => setExpandedIds(prev => { const next = new Set(prev); if (next.has(issue.issueNumber)) next.delete(issue.issueNumber); else next.add(issue.issueNumber); return next; })}
@@ -265,10 +428,22 @@ export function FeedbackIssuesPage({ lang, labels: labelOverrides, colorScheme =
                       </p>
                     </div>
 
-                    <div className="flex-shrink-0">
+                    <div className="flex-shrink-0 flex items-center gap-2">
+                      {/* Mark as Reviewed button for review-status issues */}
+                      {isReview && (
+                        <button
+                          onClick={() => openReviewDialog(issue)}
+                          className={`text-xs px-3 py-1.5 rounded-md transition-colors flex items-center gap-1.5 ${
+                            isDark ? "bg-purple-800 hover:bg-purple-700 text-purple-200" : "bg-purple-100 hover:bg-purple-200 text-purple-700"
+                          }`}
+                        >
+                          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12" /></svg>
+                          {labels.markReviewed}
+                        </button>
+                      )}
                       <button
                         onClick={() => startEdit(issue)}
-                        className={`text-xs px-3 py-1.5 rounded-md transition-colors ${isDark ? "bg-slate-700 hover:bg-slate-600 text-slate-300" : "bg-slate-100 hover:bg-slate-200 text-slate-700"}`}
+                        className={`text-xs px-3 py-1.5 rounded-md transition-colors ${btnClass}`}
                       >
                         {labels.edit}
                       </button>
@@ -280,6 +455,89 @@ export function FeedbackIssuesPage({ lang, labels: labelOverrides, colorScheme =
           })}
         </div>
       </div>
+
+      {/* Review Dialog Overlay */}
+      {reviewDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => !reviewLoading && setReviewDialog(null)}>
+          <div className="absolute inset-0 bg-black/50" />
+          <div
+            className={`relative border rounded-xl shadow-2xl p-6 max-w-md w-full mx-4 ${dialogBgClass}`}
+            onClick={e => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-bold mb-4">{labels.markReviewed}</h2>
+
+            {/* Trigger issue (always selected, can't deselect) */}
+            <label className="flex items-center gap-3 py-2">
+              <input type="checkbox" checked disabled className="w-4 h-4 accent-purple-500" />
+              <span className="text-sm">
+                <span className={`font-mono text-xs ${isDark ? "text-slate-500" : "text-slate-400"}`}>#{reviewDialog.trigger.issueNumber}</span>
+                {" "}{reviewDialog.trigger.title}
+              </span>
+            </label>
+
+            {/* Related issues from same session */}
+            {reviewDialog.relatedIssues.length > 0 && (
+              <div className="mt-3">
+                <p className={`text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-slate-500"}`}>
+                  {labels.alsoInSession}
+                </p>
+                {reviewDialog.relatedIssues.map(ri => (
+                  <label key={ri.issueNumber} className="flex items-center gap-3 py-1.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={reviewDialog.selectedNumbers.has(ri.issueNumber)}
+                      onChange={() => toggleReviewIssue(ri.issueNumber)}
+                      className="w-4 h-4 accent-purple-500 cursor-pointer"
+                    />
+                    <span className="text-sm">
+                      <span className={`font-mono text-xs ${isDark ? "text-slate-500" : "text-slate-400"}`}>#{ri.issueNumber}</span>
+                      {" "}{ri.title}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            )}
+
+            {/* Conclude toggle */}
+            <label className={`flex items-center gap-3 mt-4 py-2 px-3 rounded-lg cursor-pointer ${isDark ? "bg-slate-700/50" : "bg-slate-50"}`}>
+              <input
+                type="checkbox"
+                checked={reviewDialog.conclude}
+                onChange={() => setReviewDialog(prev => prev ? { ...prev, conclude: !prev.conclude } : null)}
+                className="w-4 h-4 accent-purple-500 cursor-pointer"
+              />
+              <span className="text-sm">{labels.conclude}</span>
+            </label>
+
+            {/* Actions */}
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => setReviewDialog(null)}
+                disabled={reviewLoading}
+                className={`text-sm px-4 py-2 rounded-lg transition-colors ${btnClass}`}
+              >
+                {labels.cancel}
+              </button>
+              <button
+                onClick={handleConfirmReview}
+                disabled={reviewLoading}
+                className={`text-sm px-4 py-2 rounded-lg transition-colors flex items-center gap-2 ${
+                  isDark ? "bg-purple-700 hover:bg-purple-600 text-white" : "bg-purple-500 hover:bg-purple-600 text-white"
+                } disabled:opacity-50`}
+              >
+                {reviewLoading ? (
+                  <>{labels.reviewing}</>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12" /></svg>
+                    {labels.markReviewed}
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

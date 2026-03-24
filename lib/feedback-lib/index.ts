@@ -13,7 +13,7 @@ export {
 } from './api-handlers';
 
 // Lower-level server utilities (for custom integrations)
-export { launchFeedback, sendMessage, killFeedback, isTmuxAlive } from './claude-launcher';
-export type { LaunchConfig, LaunchResult } from './claude-launcher';
+export { launchFeedback, launchFix, launchConclude, sendMessage, killFeedback, isTmuxAlive } from './claude-launcher';
+export type { LaunchConfig, LaunchResult, FixConfig, ConcludeConfig } from './claude-launcher';
 export { waitForResponse, resolveResponse } from './pending-responses';
 export { getSessionEnv } from './session-env';

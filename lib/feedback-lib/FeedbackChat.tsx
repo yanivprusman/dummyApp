@@ -313,9 +313,19 @@ export function FeedbackChat({ lang, labels: labelOverrides, accentClass, colorS
       if (!res.ok) throw new Error("Submit failed");
 
       const data = await res.json();
-      setSubmitResults(data.results);
-      setIssues(null);
-      setCheckedIssues([]);
+      if (data.results?.every((r: SubmitResult) => r.success)) {
+        closeSession();
+        setMessages([{ role: "assistant", text: labels.greeting }]);
+        setInput("");
+        setIssues(null);
+        setCheckedIssues([]);
+        setSubmitResults(null);
+        setOpen(false);
+      } else {
+        setSubmitResults(data.results);
+        setIssues(null);
+        setCheckedIssues([]);
+      }
     } catch {
       setMessages((prev) => [...prev, { role: "assistant", text: labels.error }]);
     } finally {

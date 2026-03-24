@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { execFile } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
-import { launchFeedback, sendMessage, killFeedback, isTmuxAlive } from './claude-launcher';
+import { launchFeedback, sendMessage, killFeedback, isTmuxAlive, launchFix, launchConclude } from './claude-launcher';
 import { waitForResponse, resolveResponse } from './pending-responses';
 
 /** Track last activity timestamp per tmux session for auto-cleanup.
@@ -227,10 +227,10 @@ export function handleFeedbackSubmit(appName: string) {
               );
             });
 
-            const match = output.match(/#(\d+)/);
+            const data = JSON.parse(output);
             return {
               title: issue.title,
-              issueNumber: match ? parseInt(match[1], 10) : undefined,
+              issueNumber: data.issueNumber,
               success: true,
             };
           } catch (err) {
@@ -255,13 +255,31 @@ export function handleFeedbackSubmit(appName: string) {
  * Returns a POST handler for /api/feedback/close
  * Kills the tmux session and cleans up tmp files.
  */
-export function handleFeedbackClose(appName: string) {
+export function handleFeedbackClose(appName: string, dashboardPort = 3007) {
   return async function POST(request: NextRequest) {
     try {
       const { tmuxSession } = await request.json();
       if (tmuxSession) {
+        // Extract claudeSessionId before removeSession clears the map
+        let claudeSessionId: string | undefined;
+        const idMap = getSessionIdMap();
+        for (const [sid, entry] of idMap.entries()) {
+          if (entry.tmuxSession === tmuxSession) {
+            claudeSessionId = sid;
+            break;
+          }
+        }
+
         killFeedback(tmuxSession, appName);
         removeSession(tmuxSession);
+
+        // Unregister from dashboard session registry
+        if (claudeSessionId) {
+          const dashboardKey = `${appName}-feedback-${claudeSessionId.slice(0, 8)}`;
+          fetch(`http://localhost:${dashboardPort}/api/claude-sessions/${dashboardKey}`, {
+            method: 'DELETE',
+          }).catch(() => {});
+        }
       }
       return NextResponse.json({ ok: true });
     } catch {
@@ -294,7 +312,7 @@ export function handleFeedbackStatus() {
  * Called by the Claude Code SessionEnd hook when a session exits.
  * Kills the associated tmux session and cleans up tracking state.
  */
-export function handleFeedbackSessionEnd(appName: string) {
+export function handleFeedbackSessionEnd(appName: string, dashboardPort = 3007) {
   return async function POST(request: NextRequest) {
     try {
       const body = await request.json();
@@ -310,6 +328,11 @@ export function handleFeedbackSessionEnd(appName: string) {
       if (entry) {
         killFeedback(entry.tmuxSession, entry.appName);
         removeSession(entry.tmuxSession);
+        // Unregister from dashboard session registry
+        const dashboardKey = `${appName}-feedback-${session_id.slice(0, 8)}`;
+        fetch(`http://localhost:${dashboardPort}/api/claude-sessions/${dashboardKey}`, {
+          method: 'DELETE',
+        }).catch(() => {});
         console.log(`[feedback-lib] SessionEnd: killed tmux=${entry.tmuxSession} for session=${session_id}`);
       } else {
         console.log(`[feedback-lib] SessionEnd: no tracked tmux for session=${session_id}`);
@@ -326,24 +349,29 @@ export function handleFeedbackSessionEnd(appName: string) {
 /**
  * Returns a handler for /api/feedback/issues
  * GET: list issues for the app
- * POST: close or reopen an issue
+ * POST: close, reopen, update, fix, or reviewed action
  */
-export function handleFeedbackIssues(appName: string) {
+export function handleFeedbackIssues(appName: string, opts?: { workDir?: string; dashboardPort?: number }) {
+  const workDir = opts?.workDir;
+  const dashboardPort = opts?.dashboardPort ?? 3007;
+
+  function daemonExec(args: string[]): Promise<string> {
+    return new Promise((resolve, reject) => {
+      execFile(
+        '/usr/local/bin/daemon',
+        args,
+        { timeout: 10_000, maxBuffer: 256 * 1024 },
+        (error, stdout, stderr) => {
+          if (error) { reject(new Error(stderr || error.message)); return; }
+          resolve(stdout.trim());
+        },
+      );
+    });
+  }
+
   async function GET() {
     try {
-      const output = await new Promise<string>((resolve, reject) => {
-        execFile(
-          '/usr/local/bin/daemon',
-          ['send', 'listIssues', '--app', appName],
-          { timeout: 10_000, maxBuffer: 256 * 1024 },
-          (error, stdout, stderr) => {
-            if (error) { reject(new Error(stderr || error.message)); return; }
-            resolve(stdout.trim());
-          },
-        );
-      });
-
-      // Parse daemon output — it returns JSON
+      const output = await daemonExec(['send', 'listIssues', '--app', appName]);
       const issues = JSON.parse(output);
       return NextResponse.json({ issues, appName });
     } catch (err) {
@@ -355,10 +383,76 @@ export function handleFeedbackIssues(appName: string) {
   async function POST(request: NextRequest) {
     try {
       const body = await request.json();
-      const { action, issueNumber } = body;
+      const { action } = body;
 
+      // --- Fix with Claude ---
+      if (action === 'fix') {
+        if (!workDir) {
+          return NextResponse.json({ error: 'Fix not configured — workDir not set' }, { status: 400 });
+        }
+        const issues: { number: number; title: string }[] = body.issues;
+        if (!Array.isArray(issues) || issues.length === 0) {
+          return NextResponse.json({ error: 'issues array required' }, { status: 400 });
+        }
+
+        const result = launchFix({ appName, workDir, issues, dashboardPort });
+
+        // Mark issues as in_progress (fire-and-forget)
+        for (const issue of issues) {
+          daemonExec([
+            'send', 'updateIssue', '--app', appName,
+            '--issueNumber', String(issue.number),
+            '--status', 'in_progress',
+            '--claudeSessionId', result.claudeSessionId,
+            '--claudeLaunchDir', workDir,
+          ]).catch(err => console.error(`${appName} mark in_progress #${issue.number}:`, err.message));
+        }
+
+        return NextResponse.json({ ok: true, claudeSessionId: result.claudeSessionId, tmuxSession: result.tmuxSession });
+      }
+
+      // --- Mark as Reviewed (close + optional conclude) ---
+      if (action === 'reviewed') {
+        const issueNumbers: number[] = body.issueNumbers;
+        if (!Array.isArray(issueNumbers) || issueNumbers.length === 0) {
+          return NextResponse.json({ error: 'issueNumbers array required' }, { status: 400 });
+        }
+
+        // Launch conclude if requested (fire-and-forget)
+        if (body.conclude && body.claudeSessionId) {
+          const concludeDir = body.claudeLaunchDir || workDir;
+          if (concludeDir) {
+            const concluded = launchConclude({
+              appName,
+              workDir: concludeDir,
+              claudeSessionId: body.claudeSessionId,
+              dashboardPort,
+            });
+            if (!concluded) {
+              console.log(`[feedback-lib] conclude: session file not found for ${body.claudeSessionId}, closing without conclude`);
+            }
+          }
+        }
+
+        // Close all specified issues
+        const results = await Promise.all(
+          issueNumbers.map(async (num) => {
+            try {
+              await daemonExec(['send', 'closeIssue', '--app', appName, '--issueNumber', String(num)]);
+              return { issueNumber: num, ok: true };
+            } catch (err) {
+              return { issueNumber: num, ok: false, error: err instanceof Error ? err.message : 'Unknown error' };
+            }
+          }),
+        );
+
+        return NextResponse.json({ ok: true, results });
+      }
+
+      // --- Standard actions: close, reopen, update ---
+      const { issueNumber } = body;
       if (!issueNumber || !['close', 'reopen', 'update'].includes(action)) {
-        return NextResponse.json({ error: 'action (close|reopen|update) and issueNumber required' }, { status: 400 });
+        return NextResponse.json({ error: 'action (close|reopen|update|fix|reviewed) and issueNumber required' }, { status: 400 });
       }
 
       let args: string[];
@@ -371,18 +465,7 @@ export function handleFeedbackIssues(appName: string) {
         args = ['send', command, '--app', appName, '--issueNumber', String(issueNumber)];
       }
 
-      const output = await new Promise<string>((resolve, reject) => {
-        execFile(
-          '/usr/local/bin/daemon',
-          args,
-          { timeout: 10_000, maxBuffer: 64 * 1024 },
-          (error, stdout, stderr) => {
-            if (error) { reject(new Error(stderr || error.message)); return; }
-            resolve(stdout.trim());
-          },
-        );
-      });
-
+      const output = await daemonExec(args);
       return NextResponse.json({ ok: true, output });
     } catch (err) {
       console.error(`${appName} issue action error:`, err);
