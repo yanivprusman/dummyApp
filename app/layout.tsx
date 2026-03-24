@@ -16,7 +16,7 @@ export default function RootLayout({
     <html lang="en">
       <body>
         {children}
-        <FeedbackChat />
+        <FeedbackChat issuesPath="/issues" />
       </body>
     </html>
   );
