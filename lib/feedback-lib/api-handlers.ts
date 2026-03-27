@@ -80,7 +80,7 @@ export function handleFeedbackMessage(appName: string, workDir: string) {
 
   return async function POST(request: NextRequest) {
     try {
-      const { message, sessionId, tmuxSession } = await request.json();
+      const { message, sessionId, tmuxSession, pagePath } = await request.json();
 
       if (!message || typeof message !== 'string' || !message.trim()) {
         return NextResponse.json({ error: 'Message is required' }, { status: 400 });
@@ -94,7 +94,10 @@ export function handleFeedbackMessage(appName: string, workDir: string) {
         // Check Stop hook config before launching
         hookWarning = checkStopHookConfig(workDir);
 
-        const result = launchFeedback({ appName, workDir, firstMessage: message.trim() });
+        const firstMessage = pagePath
+          ? `[User is on page: ${pagePath}]\n\n${message.trim()}`
+          : message.trim();
+        const result = launchFeedback({ appName, workDir, firstMessage });
         csid = result.claudeSessionId;
         tmux = result.tmuxSession;
         trackSessionId(csid, tmux, appName);
@@ -197,7 +200,7 @@ export function handleFeedbackResponse() {
 export function handleFeedbackSubmit(appName: string) {
   return async function POST(request: NextRequest) {
     try {
-      const { issues } = await request.json();
+      const { issues, pagePath } = await request.json();
 
       if (!Array.isArray(issues) || issues.length === 0) {
         return NextResponse.json({ error: 'At least one issue is required' }, { status: 400 });
@@ -207,13 +210,16 @@ export function handleFeedbackSubmit(appName: string) {
         issues.map(async (issue: { title: string; description: string }) => {
           try {
             const output = await new Promise<string>((resolve, reject) => {
+              const description = pagePath
+                ? `[Page: ${pagePath}]\n\n${issue.description}`
+                : issue.description;
               execFile(
                 '/usr/local/bin/daemon',
                 [
                   'send', 'createIssue',
                   '--app', appName,
                   '--title', issue.title,
-                  '--description', issue.description,
+                  '--description', description,
                   '--labels', '["user-reported"]',
                 ],
                 { timeout: 10_000, maxBuffer: 64 * 1024 },

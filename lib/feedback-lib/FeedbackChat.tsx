@@ -90,7 +90,16 @@ function useSystemDark() {
   return dark;
 }
 
-export function FeedbackChat({ lang, labels: labelOverrides, accentClass, colorScheme = 'system', issuesPath }: FeedbackChatProps = {}) {
+// Module-level constant — inlined at build time by Next.js bundler
+const IS_PROD = process.env.NODE_ENV === 'production';
+
+export function FeedbackChat(props: FeedbackChatProps = {}) {
+  // Only show the feedback widget in development — prod builds should be clean for end users
+  if (IS_PROD) return null;
+  return <FeedbackChatInner {...props} />;
+}
+
+function FeedbackChatInner({ lang, labels: labelOverrides, accentClass, colorScheme = 'system', issuesPath }: FeedbackChatProps) {
   const langLabels = lang ? (feedbackTranslations[lang] ?? defaultLabels) : defaultLabels;
   const labels = { ...langLabels, ...labelOverrides };
   const accent = accentClass ?? "bg-indigo-600 hover:bg-indigo-700";
@@ -198,13 +207,6 @@ export function FeedbackChat({ lang, labels: labelOverrides, accentClass, colorS
     }
   }, [open]);
 
-  // Re-focus textarea after loading completes (Enter disables it, losing focus)
-  useEffect(() => {
-    if (!loading && open && inputRef.current) {
-      inputRef.current.focus();
-    }
-  }, [loading, open]);
-
   function handleOpen() {
     setOpen(true);
     if (messages.length === 0) {
@@ -246,6 +248,7 @@ export function FeedbackChat({ lang, labels: labelOverrides, accentClass, colorS
     setIssues(null);
     setCheckedIssues([]);
     setSubmitResults(null);
+    setOpen(false);
   }
 
   async function handleSend() {
@@ -264,7 +267,7 @@ export function FeedbackChat({ lang, labels: labelOverrides, accentClass, colorS
       const res = await fetch("/api/feedback", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, sessionId, tmuxSession }),
+        body: JSON.stringify({ message: text, sessionId, tmuxSession, pagePath: window.location.pathname }),
       });
 
       if (!res.ok) {
@@ -314,7 +317,7 @@ export function FeedbackChat({ lang, labels: labelOverrides, accentClass, colorS
       const res = await fetch("/api/feedback/submit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ issues: selected }),
+        body: JSON.stringify({ issues: selected, pagePath: window.location.pathname }),
       });
 
       if (!res.ok) throw new Error("Submit failed");
@@ -484,8 +487,8 @@ export function FeedbackChat({ lang, labels: labelOverrides, accentClass, colorS
           onKeyDown={handleKeyDown}
           placeholder={labels.placeholder}
           rows={1}
-          className={`flex-1 resize-none rounded-lg border ${isDark ? 'border-slate-600 bg-slate-700 text-slate-200 placeholder-slate-500' : 'border-slate-300 bg-white text-slate-900 placeholder-slate-400'} px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent`}
-          disabled={loading}
+          className={`flex-1 resize-none rounded-lg border ${isDark ? 'border-slate-600 bg-slate-700 text-slate-200 placeholder-slate-500' : 'border-slate-300 bg-white text-slate-900 placeholder-slate-400'} px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent${loading ? ' opacity-50 cursor-not-allowed' : ''}`}
+          readOnly={loading}
         />
         <button
           onClick={handleSend}
