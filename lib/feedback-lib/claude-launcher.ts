@@ -11,6 +11,8 @@ export interface LaunchConfig {
   user?: string;
   /** Dashboard dev port for session registration (default: 3007) */
   dashboardPort?: number;
+  /** Port the app's Next.js server is running on (for global Stop hook routing) */
+  appPort?: number;
 }
 
 export interface LaunchResult {
@@ -20,7 +22,7 @@ export interface LaunchResult {
 }
 
 export function launchFeedback(config: LaunchConfig): LaunchResult {
-  const { appName, workDir, firstMessage, user = 'root', dashboardPort = 3007 } = config;
+  const { appName, workDir, firstMessage, user = 'root', dashboardPort = 3007, appPort } = config;
 
   const claudeSessionId = crypto.randomUUID();
   const tmuxSession = `${appName}-feedback-${Date.now().toString(36)}`;
@@ -48,6 +50,7 @@ export function launchFeedback(config: LaunchConfig): LaunchResult {
   const envArgs = Object.entries(sessionEnv).map(([k, v]) => `${k}=${v}`);
   envArgs.push(`CLAUDE_SESSION_ID=${claudeSessionId}`);
   envArgs.push(`CLAUDE_LAUNCH_DIR=${workDir}`);
+  if (appPort) envArgs.push(`FEEDBACK_APP_PORT=${appPort}`);
 
   writeFileSync(launchScriptFile, bashCmd + '\n', { mode: 0o755 });
 

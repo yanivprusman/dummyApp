@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { execFile } from 'child_process';
-import { existsSync, readFileSync } from 'fs';
 import { launchFeedback, sendMessage, killFeedback, isTmuxAlive, launchFix, launchConclude } from './claude-launcher';
 import { waitForResponse, resolveResponse } from './pending-responses';
 
@@ -88,16 +87,14 @@ export function handleFeedbackMessage(appName: string, workDir: string) {
 
       let csid: string;
       let tmux: string;
-      let hookWarning: string | undefined;
 
       if (!sessionId) {
-        // Check Stop hook config before launching
-        hookWarning = checkStopHookConfig(workDir);
+        const appPort = parseInt(request.nextUrl.port) || undefined;
 
         const firstMessage = pagePath
           ? `[User is on page: ${pagePath}]\n\n${message.trim()}`
           : message.trim();
-        const result = launchFeedback({ appName, workDir, firstMessage });
+        const result = launchFeedback({ appName, workDir, firstMessage, appPort });
         csid = result.claudeSessionId;
         tmux = result.tmuxSession;
         trackSessionId(csid, tmux, appName);
@@ -116,7 +113,7 @@ export function handleFeedbackMessage(appName: string, workDir: string) {
         const isTimeout = err instanceof Error && err.message.includes('Timeout');
         if (isTimeout) {
           return NextResponse.json(
-            { error: 'timeout', message: 'Claude session did not respond — the Stop hook may be misconfigured. Check .claude/settings.local.json in the app directory.', sessionId: csid, tmuxSession: tmux },
+            { error: 'timeout', message: 'Claude did not respond in time. Check ~/.claude/hooks/feedback-response-hook.sh and FEEDBACK_APP_PORT env var.', sessionId: csid, tmuxSession: tmux },
             { status: 504 },
           );
         }
@@ -140,7 +137,7 @@ export function handleFeedbackMessage(appName: string, workDir: string) {
         sessionId: csid,
         tmuxSession: tmux,
         ...(issues && { issues }),
-        ...(hookWarning && { hookWarning }),
+
       });
     } catch (err) {
       console.error(`${appName} feedback API error:`, err);
@@ -152,22 +149,6 @@ export function handleFeedbackMessage(appName: string, workDir: string) {
   };
 }
 
-function checkStopHookConfig(workDir: string): string | undefined {
-  const settingsPath = `${workDir}/.claude/settings.local.json`;
-  try {
-    if (!existsSync(settingsPath)) {
-      return 'Stop hook config not found at .claude/settings.local.json — responses may not work.';
-    }
-    const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
-    const hooks = settings?.hooks?.Stop;
-    if (!hooks || !Array.isArray(hooks) || hooks.length === 0) {
-      return 'No Stop hook configured in .claude/settings.local.json — responses may not work.';
-    }
-  } catch {
-    return 'Could not read Stop hook config — responses may not work.';
-  }
-  return undefined;
-}
 
 /**
  * Returns a POST handler for /api/feedback/response
@@ -391,6 +372,24 @@ export function handleFeedbackIssues(appName: string, opts?: { workDir?: string;
       const body = await request.json();
       const { action } = body;
 
+      // --- Create issue directly (bypass clarifier) ---
+      if (action === 'create') {
+        const { title, description } = body;
+        if (!title || typeof title !== 'string' || !title.trim()) {
+          return NextResponse.json({ error: 'title is required' }, { status: 400 });
+        }
+        const args = [
+          'send', 'createIssue',
+          '--app', appName,
+          '--title', title.trim(),
+          '--description', (description || '').trim(),
+          '--labels', '["user-reported"]',
+        ];
+        const output = await daemonExec(args);
+        const data = JSON.parse(output);
+        return NextResponse.json({ ok: true, issueNumber: data.issueNumber });
+      }
+
       // --- Fix with Claude ---
       if (action === 'fix') {
         if (!workDir) {
@@ -458,7 +457,7 @@ export function handleFeedbackIssues(appName: string, opts?: { workDir?: string;
       // --- Standard actions: close, reopen, update ---
       const { issueNumber } = body;
       if (!issueNumber || !['close', 'reopen', 'update'].includes(action)) {
-        return NextResponse.json({ error: 'action (close|reopen|update|fix|reviewed) and issueNumber required' }, { status: 400 });
+        return NextResponse.json({ error: 'action (close|reopen|update|create|fix|reviewed) and issueNumber required' }, { status: 400 });
       }
 
       let args: string[];

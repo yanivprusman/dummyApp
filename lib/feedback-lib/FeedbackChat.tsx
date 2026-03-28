@@ -36,6 +36,13 @@ export interface FeedbackLabels {
   timeoutError: string;
   networkError: string;
   viewIssues: string;
+  writeDirectly: string;
+  useClarifier: string;
+  directTitle: string;
+  directTitlePlaceholder: string;
+  directDescPlaceholder: string;
+  directSubmit: string;
+  directCreating: string;
 }
 
 const defaultLabels: FeedbackLabels = {
@@ -52,9 +59,16 @@ const defaultLabels: FeedbackLabels = {
   thinking: "Thinking...",
   endSession: "End Session",
   sessionActive: "Session active",
-  timeoutError: "Claude did not respond in time. The Stop hook may be misconfigured.",
+  timeoutError: "Claude did not respond in time.",
   networkError: "Network error — check your connection and try again.",
   viewIssues: "View Issues",
+  writeDirectly: "Write directly",
+  useClarifier: "Use clarifier",
+  directTitle: "New Issue",
+  directTitlePlaceholder: "Issue title",
+  directDescPlaceholder: "Description (optional)",
+  directSubmit: "Create Issue",
+  directCreating: "Creating...",
 };
 
 interface FeedbackChatProps {
@@ -118,7 +132,12 @@ function FeedbackChatInner({ lang, labels: labelOverrides, accentClass, colorSch
   const [submitting, setSubmitting] = useState(false);
   const [submitResults, setSubmitResults] = useState<SubmitResult[] | null>(null);
   const [hookWarning, setHookWarning] = useState<string | null>(null);
+  const [expandedIssues, setExpandedIssues] = useState<Record<number, boolean>>({});
   const [restoredSession, setRestoredSession] = useState(false);
+  const [directMode, setDirectMode] = useState(false);
+  const [directTitle, setDirectTitle] = useState("");
+  const [directDesc, setDirectDesc] = useState("");
+  const [directLoading, setDirectLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -364,6 +383,28 @@ function FeedbackChatInner({ lang, labels: labelOverrides, accentClass, colorSch
     }
   }
 
+  async function handleDirectSubmit() {
+    if (!directTitle.trim() || directLoading) return;
+    setDirectLoading(true);
+    try {
+      const res = await fetch("/api/feedback/issues", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "create", title: directTitle, description: directDesc }),
+      });
+      if (!res.ok) throw new Error("Create failed");
+      const data = await res.json();
+      setSubmitResults([{ title: directTitle, issueNumber: data.issueNumber, success: true }]);
+      setDirectTitle("");
+      setDirectDesc("");
+      setDirectMode(false);
+    } catch {
+      setSubmitResults([{ title: directTitle, success: false }]);
+    } finally {
+      setDirectLoading(false);
+    }
+  }
+
   if (!open) {
     return (
       <div className="fixed bottom-6 end-6 z-50">
@@ -403,6 +444,13 @@ function FeedbackChatInner({ lang, labels: labelOverrides, accentClass, colorSch
               {labels.endSession}
             </button>
           )}
+          <button
+            data-id="toggle-direct-mode"
+            onClick={() => { setDirectMode(v => !v); setSubmitResults(null); }}
+            className="text-xs text-indigo-200 hover:text-white transition-colors"
+          >
+            {directMode ? labels.useClarifier : labels.writeDirectly}
+          </button>
           <button onClick={handleNewChat} className="text-xs text-indigo-200 hover:text-white transition-colors" title={labels.newChat}>
             {labels.newChat}
           </button>
@@ -426,80 +474,132 @@ function FeedbackChatInner({ lang, labels: labelOverrides, accentClass, colorSch
         </div>
       )}
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 min-h-[12rem] max-h-[20rem]">
-        {messages.map((msg, i) => (
-          <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-            <div className={`max-w-[80%] px-3 py-2 rounded-xl text-sm whitespace-pre-wrap ${msg.role === "user" ? `${accentBase} text-white` : `${isDark ? 'bg-slate-700 text-slate-200' : 'bg-slate-100 text-slate-800'}`}`}>
-              {msg.text}
+      {directMode ? (
+        /* Direct issue creation form */
+        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+          <p className={`text-sm font-medium ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>{labels.directTitle}</p>
+          <input
+            data-id="direct-title"
+            type="text"
+            placeholder={labels.directTitlePlaceholder}
+            value={directTitle}
+            onChange={e => setDirectTitle(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && directTitle.trim()) handleDirectSubmit(); }}
+            className={`w-full px-3 py-2 rounded-lg border text-sm ${isDark ? 'border-slate-600 bg-slate-700 text-slate-200 placeholder-slate-500' : 'border-slate-300 bg-white text-slate-900 placeholder-slate-400'} focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent`}
+            autoFocus
+          />
+          <textarea
+            data-id="direct-description"
+            placeholder={labels.directDescPlaceholder}
+            value={directDesc}
+            onChange={e => setDirectDesc(e.target.value)}
+            rows={4}
+            className={`w-full px-3 py-2 rounded-lg border text-sm resize-none ${isDark ? 'border-slate-600 bg-slate-700 text-slate-200 placeholder-slate-500' : 'border-slate-300 bg-white text-slate-900 placeholder-slate-400'} focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent`}
+          />
+          <button
+            data-id="direct-submit"
+            onClick={handleDirectSubmit}
+            disabled={!directTitle.trim() || directLoading}
+            className={`w-full px-3 py-2 ${accent} ${isDark ? 'disabled:bg-slate-600' : 'disabled:bg-slate-300'} text-white text-sm font-medium rounded-lg transition-colors`}
+          >
+            {directLoading ? labels.directCreating : labels.directSubmit}
+          </button>
+
+          {/* Submit results in direct mode */}
+          {submitResults && (
+            <div className={`${isDark ? 'bg-green-900/30 border-green-800' : 'bg-green-50 border-green-200'} border rounded-xl p-3 space-y-1`}>
+              {submitResults.map((result, i) => (
+                <p key={i} className={`text-sm ${isDark ? 'text-green-300' : 'text-green-800'}`}>
+                  {result.success ? `${labels.issueSubmitted}${result.issueNumber ?? "?"} — ${result.title}` : `Failed: ${result.title}`}
+                </p>
+              ))}
             </div>
-          </div>
-        ))}
+          )}
+        </div>
+      ) : (
+        <>
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 min-h-[12rem] max-h-[20rem]">
+          {messages.map((msg, i) => (
+            <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+              <div className={`max-w-[80%] px-3 py-2 rounded-xl text-sm whitespace-pre-wrap ${msg.role === "user" ? `${accentBase} text-white` : `${isDark ? 'bg-slate-700 text-slate-200' : 'bg-slate-100 text-slate-800'}`}`}>
+                {msg.text}
+              </div>
+            </div>
+          ))}
 
-        {/* Issue checklist */}
-        {issues && issues.length > 0 && (
-          <div className={`${isDark ? 'bg-slate-700/50 border-slate-600' : 'bg-slate-50 border-slate-200'} border rounded-xl p-3 space-y-2`}>
-            <p className={`text-xs font-medium ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>{labels.selectIssues}</p>
-            {issues.map((issue, i) => (
-              <label key={i} className={`flex items-start gap-2 cursor-pointer p-2 rounded-lg ${isDark ? 'hover:bg-slate-600' : 'hover:bg-slate-100'} transition-colors`}>
-                <input type="checkbox" checked={checkedIssues[i] ?? true} onChange={() => toggleIssue(i)} className="mt-0.5 w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
-                <div className="flex-1 min-w-0">
-                  <p className={`text-sm font-medium ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>{issue.title}</p>
-                  <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'} line-clamp-2`}>{issue.description}</p>
-                </div>
-              </label>
-            ))}
-            <button
-              onClick={handleSubmitIssues}
-              disabled={submitting || !checkedIssues.some(Boolean)}
-              className={`w-full mt-1 px-3 py-2 ${accent} ${isDark ? 'disabled:bg-slate-600' : 'disabled:bg-slate-300'} text-white text-sm font-medium rounded-lg transition-colors`}
-            >
-              {submitting ? labels.submitting : labels.submit}
-            </button>
-          </div>
-        )}
+          {/* Issue checklist */}
+          {issues && issues.length > 0 && (
+            <div className={`${isDark ? 'bg-slate-700/50 border-slate-600' : 'bg-slate-50 border-slate-200'} border rounded-xl p-3 space-y-2`}>
+              <p className={`text-xs font-medium ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>{labels.selectIssues}</p>
+              {issues.map((issue, i) => (
+                <label key={i} className={`flex items-start gap-2 cursor-pointer p-2 rounded-lg ${isDark ? 'hover:bg-slate-600' : 'hover:bg-slate-100'} transition-colors`}>
+                  <input type="checkbox" checked={checkedIssues[i] ?? true} onChange={() => toggleIssue(i)} className="mt-0.5 w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-sm font-medium ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>{issue.title}</p>
+                    <p
+                      className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'} ${expandedIssues[i] ? '' : 'line-clamp-2'} cursor-pointer whitespace-pre-wrap`}
+                      onClick={(e) => { e.preventDefault(); setExpandedIssues(prev => ({ ...prev, [i]: !prev[i] })); }}
+                      data-id={`issue-description-${i}`}
+                    >
+                      {issue.description}
+                    </p>
+                  </div>
+                </label>
+              ))}
+              <button
+                onClick={handleSubmitIssues}
+                disabled={submitting || !checkedIssues.some(Boolean)}
+                className={`w-full mt-1 px-3 py-2 ${accent} ${isDark ? 'disabled:bg-slate-600' : 'disabled:bg-slate-300'} text-white text-sm font-medium rounded-lg transition-colors`}
+              >
+                {submitting ? labels.submitting : labels.submit}
+              </button>
+            </div>
+          )}
 
-        {/* Submit results */}
-        {submitResults && (
-          <div className={`${isDark ? 'bg-green-900/30 border-green-800' : 'bg-green-50 border-green-200'} border rounded-xl p-3 space-y-1`}>
-            {submitResults.map((result, i) => (
-              <p key={i} className={`text-sm ${isDark ? 'text-green-300' : 'text-green-800'}`}>
-                {result.success ? `${labels.issueSubmitted}${result.issueNumber ?? "?"} — ${result.title}` : `Failed: ${result.title}`}
-              </p>
-            ))}
-          </div>
-        )}
+          {/* Submit results */}
+          {submitResults && (
+            <div className={`${isDark ? 'bg-green-900/30 border-green-800' : 'bg-green-50 border-green-200'} border rounded-xl p-3 space-y-1`}>
+              {submitResults.map((result, i) => (
+                <p key={i} className={`text-sm ${isDark ? 'text-green-300' : 'text-green-800'}`}>
+                  {result.success ? `${labels.issueSubmitted}${result.issueNumber ?? "?"} — ${result.title}` : `Failed: ${result.title}`}
+                </p>
+              ))}
+            </div>
+          )}
 
-        {loading && (
-          <div className="flex justify-start">
-            <div className={`${isDark ? 'bg-slate-700 text-slate-400' : 'bg-slate-100 text-slate-500'} px-3 py-2 rounded-xl text-sm`}>{labels.thinking}</div>
-          </div>
-        )}
-        <div ref={messagesEndRef} />
-      </div>
+          {loading && (
+            <div className="flex justify-start">
+              <div className={`${isDark ? 'bg-slate-700 text-slate-400' : 'bg-slate-100 text-slate-500'} px-3 py-2 rounded-xl text-sm`}>{labels.thinking}</div>
+            </div>
+          )}
+          <div ref={messagesEndRef} />
+        </div>
 
-      {/* Input */}
-      <div className={`border-t ${isDark ? 'border-slate-700' : 'border-slate-200'} px-3 py-2 flex gap-2`}>
-        <textarea
-          ref={inputRef}
-          value={input}
-          onChange={(e) => { setInput(e.target.value); autoResize(e.target); }}
-          onKeyDown={handleKeyDown}
-          placeholder={labels.placeholder}
-          rows={1}
-          className={`flex-1 resize-none rounded-lg border ${isDark ? 'border-slate-600 bg-slate-700 text-slate-200 placeholder-slate-500' : 'border-slate-300 bg-white text-slate-900 placeholder-slate-400'} px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent${loading ? ' opacity-50 cursor-not-allowed' : ''}`}
-          readOnly={loading}
-        />
-        <button
-          onClick={handleSend}
-          disabled={loading || !input.trim()}
-          className={`px-3 py-2 ${accent} ${isDark ? 'disabled:bg-slate-600' : 'disabled:bg-slate-300'} text-white rounded-lg transition-colors`}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
-            <path d="M3.478 2.405a.75.75 0 00-.926.94l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 0018.445-8.986.75.75 0 000-1.218A60.517 60.517 0 003.478 2.405z" />
-          </svg>
-        </button>
-      </div>
+        {/* Input */}
+        <div className={`border-t ${isDark ? 'border-slate-700' : 'border-slate-200'} px-3 py-2 flex gap-2`}>
+          <textarea
+            ref={inputRef}
+            value={input}
+            onChange={(e) => { setInput(e.target.value); autoResize(e.target); }}
+            onKeyDown={handleKeyDown}
+            placeholder={labels.placeholder}
+            rows={1}
+            className={`flex-1 resize-none rounded-lg border ${isDark ? 'border-slate-600 bg-slate-700 text-slate-200 placeholder-slate-500' : 'border-slate-300 bg-white text-slate-900 placeholder-slate-400'} px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent${loading ? ' opacity-50 cursor-not-allowed' : ''}`}
+            readOnly={loading}
+          />
+          <button
+            onClick={handleSend}
+            disabled={loading || !input.trim()}
+            className={`px-3 py-2 ${accent} ${isDark ? 'disabled:bg-slate-600' : 'disabled:bg-slate-300'} text-white rounded-lg transition-colors`}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
+              <path d="M3.478 2.405a.75.75 0 00-.926.94l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 0018.445-8.986.75.75 0 000-1.218A60.517 60.517 0 003.478 2.405z" />
+            </svg>
+          </button>
+        </div>
+        </>
+      )}
     </div>
   );
 }

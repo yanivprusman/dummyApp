@@ -35,6 +35,11 @@ export interface IssuesPageLabels {
   launching: string;
   reviewing: string;
   refresh: string;
+  newIssue: string;
+  titlePlaceholder: string;
+  descriptionPlaceholder: string;
+  submit: string;
+  creating: string;
 }
 
 const defaultLabels: IssuesPageLabels = {
@@ -56,6 +61,11 @@ const defaultLabels: IssuesPageLabels = {
   launching: "Launching...",
   reviewing: "Reviewing...",
   refresh: "Refresh",
+  newIssue: "New Issue",
+  titlePlaceholder: "Issue title",
+  descriptionPlaceholder: "Description (optional)",
+  submit: "Create",
+  creating: "Creating...",
 };
 
 const heLabels: IssuesPageLabels = {
@@ -77,6 +87,11 @@ const heLabels: IssuesPageLabels = {
   launching: "משיק...",
   reviewing: "מסמן...",
   refresh: "רענון",
+  newIssue: "תקלה חדשה",
+  titlePlaceholder: "כותרת התקלה",
+  descriptionPlaceholder: "תיאור (אופציונלי)",
+  submit: "יצירה",
+  creating: "יוצר...",
 };
 
 const issuesTranslations: Record<string, IssuesPageLabels> = {
@@ -157,6 +172,12 @@ export function FeedbackIssuesPage({ lang, labels: labelOverrides, colorScheme =
   // Review dialog
   const [reviewDialog, setReviewDialog] = useState<ReviewDialogState | null>(null);
   const [reviewLoading, setReviewLoading] = useState(false);
+
+  // Create form
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [createTitle, setCreateTitle] = useState("");
+  const [createDesc, setCreateDesc] = useState("");
+  const [createLoading, setCreateLoading] = useState(false);
 
   const fetchIssues = useCallback(async () => {
     try {
@@ -266,6 +287,25 @@ export function FeedbackIssuesPage({ lang, labels: labelOverrides, colorScheme =
     });
   }
 
+  async function handleCreateIssue() {
+    if (!createTitle.trim()) return;
+    setCreateLoading(true);
+    try {
+      const res = await fetch("/api/feedback/issues", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "create", title: createTitle, description: createDesc }),
+      });
+      if (res.ok) {
+        setCreateTitle("");
+        setCreateDesc("");
+        setShowCreateForm(false);
+        fetchIssues();
+      }
+    } catch { /* ignore */ }
+    setCreateLoading(false);
+  }
+
   function toggleReviewIssue(issueNumber: number) {
     if (!reviewDialog) return;
     // Don't allow deselecting the trigger issue
@@ -321,6 +361,18 @@ export function FeedbackIssuesPage({ lang, labels: labelOverrides, colorScheme =
           <h1 className="text-2xl font-bold">{appName ? `${appName} — ${labels.pageTitle}` : labels.pageTitle}</h1>
           <div className="flex items-center gap-2">
           <button
+            data-id="new-issue"
+            onClick={() => setShowCreateForm(v => !v)}
+            className={`text-sm px-4 py-2 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 active:scale-95 ${
+              showCreateForm
+                ? isDark ? "bg-green-700 text-white" : "bg-green-500 text-white"
+                : isDark ? "bg-green-800 hover:bg-green-700 text-green-200" : "bg-green-100 hover:bg-green-200 text-green-700"
+            }`}
+          >
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
+            {labels.newIssue}
+          </button>
+          <button
             data-id="refresh-issues"
             onClick={() => fetchIssues()}
             title={labels.refresh}
@@ -349,6 +401,47 @@ export function FeedbackIssuesPage({ lang, labels: labelOverrides, colorScheme =
           </button>
           </div>
         </div>
+
+        {/* Create Issue Form */}
+        {showCreateForm && (
+          <div className={`mb-4 border rounded-lg p-4 ${cardClass}`}>
+            <input
+              data-id="create-title"
+              type="text"
+              placeholder={labels.titlePlaceholder}
+              value={createTitle}
+              onChange={e => setCreateTitle(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && createTitle.trim()) handleCreateIssue(); }}
+              className={`w-full px-3 py-1.5 rounded-md border text-sm font-medium mb-2 ${isDark ? "bg-slate-700 border-slate-600 text-slate-200 placeholder-slate-500" : "bg-white border-slate-300 text-slate-900 placeholder-slate-400"}`}
+              autoFocus
+            />
+            <textarea
+              data-id="create-description"
+              placeholder={labels.descriptionPlaceholder}
+              value={createDesc}
+              onChange={e => setCreateDesc(e.target.value)}
+              rows={3}
+              className={`w-full px-3 py-1.5 rounded-md border text-sm mb-3 ${isDark ? "bg-slate-700 border-slate-600 text-slate-200 placeholder-slate-500" : "bg-white border-slate-300 text-slate-900 placeholder-slate-400"} whitespace-pre-wrap`}
+            />
+            <div className="flex gap-2">
+              <button
+                data-id="create-submit"
+                onClick={handleCreateIssue}
+                disabled={!createTitle.trim() || createLoading}
+                className={`text-xs px-4 py-1.5 rounded-md transition-colors cursor-pointer ${btnPrimaryClass} disabled:opacity-50 active:scale-95`}
+              >
+                {createLoading ? labels.creating : labels.submit}
+              </button>
+              <button
+                data-id="create-cancel"
+                onClick={() => { setShowCreateForm(false); setCreateTitle(""); setCreateDesc(""); }}
+                className={`text-xs px-3 py-1.5 rounded-md transition-colors cursor-pointer ${btnClass} active:scale-95`}
+              >
+                {labels.cancel}
+              </button>
+            </div>
+          </div>
+        )}
 
         {loading && <p className={isDark ? "text-slate-400" : "text-slate-500"}>{labels.loading}</p>}
         {error && <p className="text-red-500">{error}</p>}
