@@ -27,7 +27,7 @@ export default function Home() {
       <button
         data-id="random-color"
         onClick={() => setRandomColor(colors[Math.floor(Math.random() * colors.length)])}
-        style={{ padding: "12px 24px", fontSize: "16px", borderRadius: "8px", border: "none", backgroundColor: randomColor ? colorMap[randomColor] : "#ef4444", color: "white", cursor: "pointer" }}
+        style={{ padding: "12px 24px", fontSize: "16px", borderRadius: "8px", border: "none", backgroundColor: randomColor ? colorMap[randomColor] : "#22c55e", color: "white", cursor: "pointer" }}
       >
         {randomColor ? `Color: ${randomColor}` : "Random Color"}
       </button>
