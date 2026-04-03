@@ -24,12 +24,13 @@ export default function Home() {
 
     const handleMouseMove = (ev: MouseEvent) => {
       if (!dragRef.current) return;
-      const dx = ev.clientX - dragRef.current.startX;
-      const dy = ev.clientY - dragRef.current.startY;
+      const { id, startX, startY, origX, origY } = dragRef.current;
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
       if (Math.abs(dx) > 3 || Math.abs(dy) > 3) didDragRef.current = true;
       setPositions(prev => ({
         ...prev,
-        [dragRef.current!.id]: { x: dragRef.current!.origX + dx, y: dragRef.current!.origY + dy },
+        [id]: { x: origX + dx, y: origY + dy },
       }));
     };
 
