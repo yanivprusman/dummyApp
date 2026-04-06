@@ -99,7 +99,7 @@ export default function Home() {
       <button
         data-id="placeholder-6"
         onMouseDown={(e) => handleMouseDown("placeholder-6", e)}
-        style={btnStyle("placeholder-6", "#a855f7")}
+        style={btnStyle("placeholder-6", "#f97316")}
       >
         Button 6
       </button>
