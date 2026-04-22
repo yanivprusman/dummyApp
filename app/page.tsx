@@ -90,13 +90,6 @@ export default function Home() {
         {randomColor ? `Color: ${randomColor}` : "Random Color"}
       </button>
       <button
-        data-id="placeholder"
-        onMouseDown={(e) => handleMouseDown("placeholder", e)}
-        style={btnStyle("placeholder", "#a855f7")}
-      >
-        Button 5
-      </button>
-      <button
         data-id="placeholder-6"
         onMouseDown={(e) => handleMouseDown("placeholder-6", e)}
         style={btnStyle("placeholder-6", "#eab308")}
