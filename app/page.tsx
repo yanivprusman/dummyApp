@@ -117,6 +117,13 @@ export default function Home() {
       >
         Button 8
       </button>
+      <button
+        data-id="placeholder-9"
+        onMouseDown={(e) => handleMouseDown("placeholder-9", e)}
+        style={btnStyle("placeholder-9", "#d946ef")}
+      >
+        Button 9
+      </button>
     </main>
   );
 }
