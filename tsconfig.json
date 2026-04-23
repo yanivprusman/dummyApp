@@ -16,17 +16,9 @@
     "paths": {
       "@/*": [
         "./*"
-      ],
-      "@automate/feedback-lib/core": [
-        "./lib/feedback-lib/core/index.ts"
-      ],
-      "@automate/feedback-lib/launcher": [
-        "./lib/feedback-lib/launcher/index.ts"
-      ],
-      "@automate/feedback-lib/*": [
-        "./lib/feedback-lib/*"
       ]
     },
+    "preserveSymlinks": true,
     "plugins": [
       {
         "name": "next"

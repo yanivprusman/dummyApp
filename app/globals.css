@@ -1,5 +1,6 @@
 @import "tailwindcss";
-@source "../lib/feedback-lib";
+@source "../../../automateLinux/packages/feedback-lib/src";
+@source "../../../automateLinux/packages/feedback-lib-launcher/src";
 
 body {
   background-color: #b3b3b3;
