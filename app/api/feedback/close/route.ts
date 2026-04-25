@@ -1,2 +1,3 @@
-import { handleFeedbackClose } from '@addnewfeature/feedback-lib-launcher';
-export const POST = handleFeedbackClose('dummyApp');
+import { handleFeedbackClose, getAppConfig } from '@addnewfeature/feedback-lib-launcher';
+const { appName } = getAppConfig();
+export const POST = handleFeedbackClose(appName);
