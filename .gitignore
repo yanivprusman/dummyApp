@@ -43,3 +43,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# feedback-lib is hardlinked from automateLinux — tracked in addnewfeature, not here
+/lib/feedback-lib/
+
