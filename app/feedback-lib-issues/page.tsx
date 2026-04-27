@@ -1,7 +1,7 @@
-import { MAINTENANCE_PROMPTS } from '@addnewfeature/feedback-lib-launcher';
-import FeedbackIssuesPageMount from './FeedbackIssuesPageMount';
+import { MAINTENANCE_PROMPTS } from "@addnewfeature/feedback-lib-launcher";
+import FeedbackIssuesPageMount from "./FeedbackIssuesPageMount";
 
-export { generateFeedbackIssuesMetadata as generateMetadata } from '@claudecontrol/feedback-lib';
+export { generateFeedbackIssuesMetadata as generateMetadata } from "@claudecontrol/feedback-lib";
 
 export default async function FeedbackIssues({
   searchParams,
