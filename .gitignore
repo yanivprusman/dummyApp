@@ -43,6 +43,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# feedback-lib is hardlinked from automateLinux — tracked in addnewfeature, not here
+# feedback-lib source — uses workspace @claudecontrol/feedback-lib package
 /lib/feedback-lib/
 
